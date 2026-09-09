@@ -29,7 +29,8 @@ CREATE TABLE IF NOT EXISTS user (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     username      TEXT UNIQUE NOT NULL,
     password_hash TEXT NOT NULL,                          -- 加密存储密码，禁止明文
-    create_time   DATETIME DEFAULT CURRENT_TIMESTAMP      -- 注册时间（个人中心展示）
+    create_time   DATETIME DEFAULT CURRENT_TIMESTAMP,     -- 注册时间（个人中心展示）
+    is_admin      BOOLEAN NOT NULL DEFAULT 0              -- 管理员标记：1=管理员（可进入审核面板）
 );
 
 CREATE TABLE IF NOT EXISTS collect (
@@ -81,6 +82,11 @@ def init_db(db_path):
         user_cols = [row[1] for row in conn.execute("PRAGMA table_info(user)")]
         if "create_time" not in user_cols:
             conn.execute("ALTER TABLE user ADD COLUMN create_time DATETIME")
+        # 旧库迁移：user 表补充 is_admin 列（管理员审核面板权限校验）。
+        if "is_admin" not in user_cols:
+            conn.execute(
+                "ALTER TABLE user ADD COLUMN is_admin BOOLEAN NOT NULL DEFAULT 0"
+            )
         conn.commit()
     finally:
         conn.close()
@@ -139,6 +145,8 @@ def get_user_by_username(db_path, username):
 # 学科与难度枚举（与项目方案文档一致）
 SUBJECTS = ["语文", "数学", "英语", "物理", "化学", "生物", "历史", "地理", "政治"]
 DIFFICULTIES = {1: "基础", 2: "中档", 3: "拔高", 4: "竞赛级"}
+# 试卷含金量等级（与项目方案文档一致）
+LEVELS = ["高考真题", "省级统考", "名校联考", "地市统考", "优质模考"]
 
 
 def query_papers(db_path, keyword=None, subject=None, difficulty=None,
@@ -322,5 +330,75 @@ def clear_view_history(db_path, user_id):
         cur = conn.execute("DELETE FROM view_history WHERE user_id = ?", (user_id,))
         conn.commit()
         return cur.rowcount
+    finally:
+        conn.close()
+
+
+def add_pending_paper(db_path, title, subject, year, source_url, source_school=None):
+    """写入一条爬虫采集的待审核元数据（管理员审核通过前不上线）。返回记录 id。"""
+    conn = get_db(db_path)
+    try:
+        cur = conn.execute(
+            "INSERT INTO pending_paper (title, subject, year, source_url,"
+            " source_school, crawl_time) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)",
+            (title, subject, year, source_url, source_school),
+        )
+        conn.commit()
+        return cur.lastrowid
+    finally:
+        conn.close()
+
+
+def query_pending_papers(db_path):
+    """查询全部待审核元数据（按抓取时间倒序）。"""
+    conn = get_db(db_path)
+    try:
+        return conn.execute(
+            "SELECT * FROM pending_paper ORDER BY crawl_time DESC, id DESC"
+        ).fetchall()
+    finally:
+        conn.close()
+
+
+def get_pending_paper_by_id(db_path, pending_id):
+    """按 id 查询待审核记录，不存在返回 None。"""
+    conn = get_db(db_path)
+    try:
+        return conn.execute(
+            "SELECT * FROM pending_paper WHERE id = ?", (pending_id,)
+        ).fetchone()
+    finally:
+        conn.close()
+
+
+def approve_pending_paper(db_path, pending_id, title, subject, year, difficulty,
+                          level, has_answer, source_url, source_school=None):
+    """审核通过：元数据转正入库 paper 表，并删除待审核记录（同一事务）。
+
+    返回新试卷的 id。调用前需在路由层完成字段校验。
+    """
+    conn = get_db(db_path)
+    try:
+        cur = conn.execute(
+            "INSERT INTO paper (title, subject, year, difficulty, level,"
+            " has_answer, source_url, source_school)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (title, subject, year, difficulty, level, has_answer,
+             source_url, source_school),
+        )
+        conn.execute("DELETE FROM pending_paper WHERE id = ?", (pending_id,))
+        conn.commit()
+        return cur.lastrowid
+    finally:
+        conn.close()
+
+
+def delete_pending_paper(db_path, pending_id):
+    """审核驳回：删除待审核记录。返回是否确实删除了记录。"""
+    conn = get_db(db_path)
+    try:
+        cur = conn.execute("DELETE FROM pending_paper WHERE id = ?", (pending_id,))
+        conn.commit()
+        return cur.rowcount > 0
     finally:
         conn.close()

@@ -8,6 +8,7 @@ from flask import Flask, abort, redirect, render_template, request, session, url
 
 import config
 import models
+from crawler import spider as crawler
 
 app = Flask(__name__)
 app.config.from_object(config.Config)
@@ -24,6 +25,17 @@ def init_db_command():
     print("数据库初始化完成:", app.config["DATABASE"])
 
 
+@app.cli.command("crawl")
+def crawl_command():
+    """运行元数据爬虫（只采集元数据，写入待审核表）：flask --app app crawl"""
+    try:
+        count = crawler.crawl(app.config["DATABASE"])
+    except RuntimeError as exc:
+        print("爬虫中止:", exc)
+    else:
+        print(f"爬取完成，新增待审核 {count} 条（需管理员审核后上线）")
+
+
 def login_required(view):
     """登录保护装饰器：未登录访问受限页面时重定向到登录页。"""
 
@@ -34,6 +46,35 @@ def login_required(view):
         return view(*args, **kwargs)
 
     return wrapped
+
+
+def admin_required(view):
+    """管理员权限校验：未登录重定向登录页，普通用户返回 403。"""
+
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if "user_id" not in session:
+            return redirect(url_for("login"))
+        user = models.get_user_by_id(app.config["DATABASE"], session["user_id"])
+        if user is None:
+            # 会话中的用户已被删除：清除会话回登录页
+            session.clear()
+            return redirect(url_for("login"))
+        if not user["is_admin"]:
+            abort(403)
+        return view(*args, **kwargs)
+
+    return wrapped
+
+
+@app.context_processor
+def inject_is_admin():
+    """向所有模板注入 is_admin，导航栏据此决定是否显示审核面板入口。"""
+    is_admin = False
+    if "user_id" in session:
+        user = models.get_user_by_id(app.config["DATABASE"], session["user_id"])
+        is_admin = bool(user and user["is_admin"])
+    return {"is_admin": is_admin}
 
 
 @app.route("/")
@@ -183,6 +224,74 @@ def profile():
     return render_template(
         "profile.html", username=session.get("username"), user=user
     )
+
+
+@app.route("/admin/pending")
+@admin_required
+def admin_pending():
+    """管理员待审核面板：查看爬虫采集的待审核元数据，审核通过入库或驳回删除。"""
+    pendings = models.query_pending_papers(app.config["DATABASE"])
+    return render_template(
+        "admin_pending.html",
+        username=session.get("username"),
+        pendings=pendings,
+        subjects=models.SUBJECTS,
+        difficulties=models.DIFFICULTIES,
+        levels=models.LEVELS,
+    )
+
+
+@app.route("/admin/pending/<int:pending_id>/approve", methods=["POST"])
+@admin_required
+def approve_pending(pending_id):
+    """审核通过：校验表单字段后把待审核元数据转正入库 paper 表。"""
+    pending = models.get_pending_paper_by_id(app.config["DATABASE"], pending_id)
+    if pending is None:
+        abort(404)
+
+    title = request.form.get("title", "").strip()
+    subject = request.form.get("subject", "").strip()
+    level = request.form.get("level", "").strip()
+    source_url = request.form.get("source_url", "").strip()
+    try:
+        year = int(request.form.get("year", "").strip())
+        difficulty = int(request.form.get("difficulty", "").strip())
+    except ValueError:
+        year = difficulty = None
+    has_answer = 1 if request.form.get("has_answer") == "1" else 0
+
+    if not title or not source_url or not year or not difficulty:
+        error = "标题、来源链接、年份、难度均不能为空"
+    elif subject not in models.SUBJECTS:
+        error = "学科无效，请从列表中选择"
+    elif difficulty not in models.DIFFICULTIES:
+        error = "难度无效，请从列表中选择"
+    elif level not in models.LEVELS:
+        error = "试卷等级无效，请从列表中选择"
+    else:
+        models.approve_pending_paper(
+            app.config["DATABASE"], pending_id, title, subject, year, difficulty,
+            level, has_answer, source_url, pending["source_school"],
+        )
+        return redirect(url_for("admin_pending"))
+    return render_template(
+        "admin_pending.html",
+        username=session.get("username"),
+        pendings=models.query_pending_papers(app.config["DATABASE"]),
+        subjects=models.SUBJECTS,
+        difficulties=models.DIFFICULTIES,
+        levels=models.LEVELS,
+        error=error,
+    )
+
+
+@app.route("/admin/pending/<int:pending_id>/reject", methods=["POST"])
+@admin_required
+def reject_pending(pending_id):
+    """审核驳回：删除待审核记录。"""
+    if not models.delete_pending_paper(app.config["DATABASE"], pending_id):
+        abort(404)
+    return redirect(url_for("admin_pending"))
 
 
 @app.route("/register", methods=["GET", "POST"])

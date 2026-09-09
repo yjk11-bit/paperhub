@@ -4,6 +4,7 @@
 - 密码使用哈希存储，禁止明文（werkzeug.security）
 - 版权约束：任何表都不保存 PDF 文件路径或二进制，只存元数据与外部网页链接
 """
+import math
 import os
 import sqlite3
 
@@ -113,5 +114,51 @@ def get_user_by_username(db_path, username):
         return conn.execute(
             "SELECT * FROM user WHERE username = ?", (username,)
         ).fetchone()
+    finally:
+        conn.close()
+
+
+# 学科与难度枚举（与项目方案文档一致）
+SUBJECTS = ["语文", "数学", "英语", "物理", "化学", "生物", "历史", "地理", "政治"]
+DIFFICULTIES = {1: "基础", 2: "中档", 3: "拔高", 4: "竞赛级"}
+
+
+def query_papers(db_path, keyword=None, subject=None, difficulty=None,
+                 page=1, per_page=10):
+    """分页查询试卷：标题关键词模糊搜索 + 科目 + 难度筛选（条件可叠加）。
+
+    返回 (papers, total, total_pages)。页码越界时收敛到最后一页。
+    """
+    where = []
+    params = []
+    if keyword:
+        where.append("title LIKE ?")
+        params.append(f"%{keyword}%")
+    if subject:
+        where.append("subject = ?")
+        params.append(subject)
+    if difficulty:
+        try:
+            d = int(difficulty)
+        except ValueError:
+            d = None  # 非法难度参数，忽略该筛选条件
+        if d is not None:
+            where.append("difficulty = ?")
+            params.append(d)
+    where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+
+    conn = get_db(db_path)
+    try:
+        total = conn.execute(
+            f"SELECT COUNT(*) FROM paper {where_sql}", params
+        ).fetchone()[0]
+        total_pages = max(1, math.ceil(total / per_page))
+        page = min(max(1, page), total_pages)
+        rows = conn.execute(
+            f"SELECT * FROM paper {where_sql}"
+            " ORDER BY create_time DESC, id DESC LIMIT ? OFFSET ?",
+            params + [per_page, (page - 1) * per_page],
+        ).fetchall()
+        return rows, total, total_pages
     finally:
         conn.close()

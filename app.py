@@ -39,8 +39,36 @@ def login_required(view):
 @app.route("/")
 @login_required
 def index():
-    """首页（需登录）：后续阶段再实现页面业务逻辑。"""
-    return render_template("index.html", username=session.get("username"))
+    """题库主页（需登录）：分页展示 + 检索筛选（标题关键词、科目、难度，可叠加）。"""
+    keyword = request.args.get("keyword", "").strip()
+    subject = request.args.get("subject", "").strip()
+    difficulty = request.args.get("difficulty", "").strip()
+    try:
+        page = int(request.args.get("page", 1))
+    except ValueError:
+        page = 1
+
+    papers, total, total_pages = models.query_papers(
+        app.config["DATABASE"],
+        keyword=keyword,
+        subject=subject,
+        difficulty=difficulty,
+        page=page,
+        per_page=10,
+    )
+    return render_template(
+        "index.html",
+        username=session.get("username"),
+        papers=papers,
+        page=page,
+        total=total,
+        total_pages=total_pages,
+        keyword=keyword,
+        subject=subject,
+        difficulty=difficulty,
+        subjects=models.SUBJECTS,
+        difficulties=models.DIFFICULTIES,
+    )
 
 
 @app.route("/register", methods=["GET", "POST"])

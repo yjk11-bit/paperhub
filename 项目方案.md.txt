@@ -1,0 +1,111 @@
+# PaperHub 高中精品试卷库项目方案
+> 项目定位：高质量高中试卷索引聚合平台，**不托管PDF文件，只做元数据索引+人工筛选**，规避版权风险。
+> 技术选型：Python Flask + SQLite + TailwindCSS；适合VibeCoding Agent直接生成代码。
+> 目标：MVP最小可用版本，可作为个人作品集项目。
+
+## 1. 项目概述
+### 痛点
+市面上试卷网站泛滥，大量重复、低质量模拟卷；缺少按「含金量等级、难度、学校层级、年份」的精准筛选；很多试卷无解析，广告多。
+
+### 核心差异化
+1. **只收录高含金量试卷**，机器采集元数据 + 人工审核过滤垃圾试卷
+2. 多维筛选：学科、年份、难度、试卷等级、是否带解析
+3. **版权合规设计：不存储PDF文件，保存原始来源链接，用户跳转源站下载**
+4. 支持用户收藏、浏览历史；管理员后台完成试卷录入与标签打标
+
+### 约束
+- ❌禁止爬虫下载、保存PDF二进制文件
+- ✅爬虫仅抓取**试卷元信息（标题、学科、年份、来源、原始网页链接）**
+- ✅所有试卷需要人工审核打标签，剔除低质量试卷
+
+## 2. 技术栈
+### 后端
+- 框架：Flask（轻量，适合快速开发）
+- 数据库：SQLite（无需额外安装数据库，开发简单；后期可迁移MySQL）
+- 爬虫：requests + BeautifulSoup，仅采集元数据，限速，遵守robots协议
+- 模板引擎：Jinja2
+
+### 前端
+- HTML + TailwindCSS
+- 原生JS实现筛选、分页、收藏交互
+- PDF预览：不做本地托管，跳转外部源站
+
+### 部署
+本地开发；后续可部署到Vercel / PythonAnywhere
+
+## 3. 数据库设计（SQLite）
+### 表1：paper 试卷表（核心）
+|字段|类型|说明|
+|---|---|---|
+|id|INTEGER PRIMARY KEY AUTOINCREMENT|主键|
+|title|TEXT NOT NULL|试卷完整标题|
+|subject|TEXT NOT NULL|学科：语文/数学/英语/物理/化学/生物/历史/地理/政治|
+|year|INTEGER NOT NULL|试卷年份，例：2025|
+|difficulty|INTEGER NOT NULL|难度：1=基础，2=中档，3=拔高，4=竞赛级|
+|level|TEXT NOT NULL|试卷含金量等级：高考真题 / 省级统考 / 名校联考 / 地市统考 / 优质模考|
+|has_answer|BOOLEAN NOT NULL|是否附带完整解析|
+|source_url|TEXT NOT NULL|原始网页链接（跳转源站，不存PDF）|
+|source_school|TEXT|来源学校/机构|
+|create_time|DATETIME DEFAULT CURRENT_TIMESTAMP|录入时间|
+
+### 表2：user 用户表
+|字段|类型|说明|
+|---|---|---|
+|id|INTEGER PRIMARY KEY AUTOINCREMENT|主键|
+|username|TEXT UNIQUE NOT NULL|用户名|
+|password_hash|TEXT NOT NULL|加密存储密码，禁止明文|
+
+### 表3：collect 收藏表（多对多关系）
+|字段|类型|说明|
+|---|---|---|
+|id|INTEGER PRIMARY KEY AUTOINCREMENT|主键|
+|user_id|INTEGER NOT NULL|用户id，外键关联user|
+|paper_id|INTEGER NOT NULL|试卷id，外键关联paper|
+|collect_time|DATETIME DEFAULT CURRENT_TIMESTAMP|收藏时间|
+
+### 表4：view_history 浏览历史
+|字段|类型|说明|
+|---|---|---|
+|id|INTEGER PRIMARY KEY AUTOINCREMENT|主键|
+|user_id|INTEGER NOT NULL|用户id|
+|paper_id|INTEGER NOT NULL|试卷id|
+|view_time|DATETIME DEFAULT CURRENT_TIMESTAMP|浏览时间|
+
+### 表5：pending_paper 爬虫待审核表
+|字段|类型|说明|
+|---|---|---|
+|id|INTEGER PRIMARY KEY AUTOINCREMENT|主键|
+|title|TEXT|抓取的试卷标题|
+|subject|TEXT|抓取学科|
+|year|INTEGER|抓取年份|
+|source_url|TEXT|原始网页链接|
+|source_school|TEXT|来源|
+|crawl_time|DATETIME|抓取时间|
+
+> 约束：
+> 1. 不保存pdf本地路径；source_url 保存外部网页地址
+> 2. 爬虫采集的原始数据，必须经过管理员人工审核，才会入库上线
+
+## 4. 页面结构（一共6个页面）
+1. **首页 index.html**
+    - 顶部导航栏：学科分类、搜索框
+    - 精选试卷推荐卡片
+    - 快速筛选入口（年份、难度、试卷等级）
+2. **试卷列表页 paper_list.html【核心页面】**
+    - 多条件筛选表单：学科、年份、难度、试卷等级、是否带解析
+    - 分页展示试卷卡片；卡片展示标题、学科、年份、难度标签、来源
+    - 点击卡片跳转到试卷详情页
+3. **试卷详情页 paper_detail.html**
+    - 试卷完整信息展示
+    - 按钮：跳转到原始来源链接（外部打开）
+    - 收藏按钮
+4. **用户个人中心 user_center.html**
+    - 收藏试卷列表
+    - 浏览历史记录
+5. **管理员后台 admin.html**
+    - 手动录入试卷表单
+    - 查看爬虫采集待审核列表
+    - 试卷上下架、编辑标签
+6. **登录注册 login_register.html**
+
+## 5. 后端接口设计（Flask路由）

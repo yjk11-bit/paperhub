@@ -149,6 +149,16 @@ DIFFICULTIES = {1: "基础", 2: "中档", 3: "拔高", 4: "竞赛级"}
 LEVELS = ["高考真题", "省级统考", "名校联考", "地市统考", "优质模考"]
 
 
+def _escape_like(keyword):
+    """转义 LIKE 通配符（\\、%、_），保证搜索关键词按字面匹配。
+
+    否则用户搜索 "%" 会命中全部试卷、"1_2" 会把 "_" 当作任意单字符。
+    """
+    return (
+        keyword.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    )
+
+
 def query_papers(db_path, keyword=None, subject=None, difficulty=None,
                  page=1, per_page=10):
     """分页查询试卷：标题关键词模糊搜索 + 科目 + 难度筛选（条件可叠加）。
@@ -158,8 +168,8 @@ def query_papers(db_path, keyword=None, subject=None, difficulty=None,
     where = []
     params = []
     if keyword:
-        where.append("title LIKE ?")
-        params.append(f"%{keyword}%")
+        where.append("title LIKE ? ESCAPE '\\'")
+        params.append(f"%{_escape_like(keyword)}%")
     if subject:
         where.append("subject = ?")
         params.append(subject)
@@ -349,13 +359,22 @@ def add_pending_paper(db_path, title, subject, year, source_url, source_school=N
         conn.close()
 
 
-def query_pending_papers(db_path):
-    """查询全部待审核元数据（按抓取时间倒序）。"""
+def query_pending_papers(db_path, page=1, per_page=10):
+    """分页查询待审核元数据（按抓取时间倒序）。返回 (rows, total, total_pages)。
+
+    页码越界时收敛到最后一页；与全站其他列表页保持同样的分页规范。
+    """
     conn = get_db(db_path)
     try:
-        return conn.execute(
+        total = conn.execute("SELECT COUNT(*) FROM pending_paper").fetchone()[0]
+        total_pages = max(1, math.ceil(total / per_page))
+        page = min(max(1, page), total_pages)
+        rows = conn.execute(
             "SELECT * FROM pending_paper ORDER BY crawl_time DESC, id DESC"
+            " LIMIT ? OFFSET ?",
+            (per_page, (page - 1) * per_page),
         ).fetchall()
+        return rows, total, total_pages
     finally:
         conn.close()
 

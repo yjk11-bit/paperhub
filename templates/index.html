@@ -1,95 +1,74 @@
-<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>题库主页 - PaperHub</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-</head>
-<body class="min-h-screen bg-gray-100">
-  <header class="bg-white shadow">
-    <div class="max-w-4xl mx-auto px-4 py-4 flex items-center justify-between">
-      <h1 class="text-lg font-bold text-gray-800">PaperHub 高中精品试卷库</h1>
-      <div class="text-sm text-gray-600 flex items-center gap-3">
-        <span>{{ username }}</span>
-        <a href="{{ url_for('my_collects') }}" class="text-blue-600 hover:underline">我的收藏</a>
-        <a href="{{ url_for('profile') }}" class="text-blue-600 hover:underline">个人中心</a>
-        {% if is_admin %}<a href="{{ url_for('admin_pending') }}" class="text-amber-600 hover:underline">审核面板</a>{% endif %}
-        <a href="{{ url_for('logout') }}" class="text-blue-600 hover:underline">退出登录</a>
-      </div>
-    </div>
-  </header>
-
-  <main class="max-w-4xl mx-auto px-4 py-6">
-    <!-- 检索筛选表单（条件可叠加） -->
-    <form method="get" action="{{ url_for('index') }}" class="bg-white rounded-lg shadow p-4 flex flex-wrap items-end gap-3">
-      <div class="flex-1 min-w-[200px]">
-        <label class="block text-sm font-medium text-gray-700 mb-1">标题关键词</label>
-        <input type="text" name="keyword" value="{{ keyword }}" placeholder="搜索试卷标题…"
-               class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-      </div>
-      <div>
-        <label class="block text-sm font-medium text-gray-700 mb-1">科目</label>
-        <select name="subject" class="border border-gray-300 rounded px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
-          <option value="">全部</option>
-          {% for s in subjects %}
-          <option value="{{ s }}" {% if s == subject %}selected{% endif %}>{{ s }}</option>
-          {% endfor %}
-        </select>
-      </div>
-      <div>
-        <label class="block text-sm font-medium text-gray-700 mb-1">难度</label>
-        <select name="difficulty" class="border border-gray-300 rounded px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
-          <option value="">全部</option>
-          {% for d, label in difficulties.items() %}
-          <option value="{{ d }}" {% if d|string == difficulty %}selected{% endif %}>{{ label }}</option>
-          {% endfor %}
-        </select>
-      </div>
-      <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white rounded px-4 py-2 text-sm">搜索</button>
-      <a href="{{ url_for('index') }}" class="text-gray-500 hover:text-gray-700 text-sm px-3 py-2">重置</a>
-    </form>
-
-    <!-- 试卷列表 -->
-    <div class="bg-white rounded-lg shadow mt-4">
-      <div class="px-4 py-3 border-b border-gray-100 text-sm text-gray-500">共 {{ total }} 条试卷</div>
-      {% if papers %}
-      <ul class="divide-y divide-gray-100 px-4">
-        {% for paper in papers %}
-        <li class="paper-item py-3">
-          <a href="{{ url_for('paper_detail', paper_id=paper['id']) }}" class="text-sm font-medium text-gray-800 hover:text-blue-600">{{ paper['title'] }}</a>
-          <p class="text-xs text-gray-500 mt-1">
-            科目：{{ paper['subject'] }} · 年份：{{ paper['year'] }} · 难度：{{ difficulties[paper['difficulty']] }} · 来源：{{ paper['source_school'] or '—' }}
-          </p>
-        </li>
+{% extends "base.html" %}
+{% block title %}题库主页 - PaperHub{% endblock %}
+{% block content %}
+  <!-- 筛选表单（科目 + 难度，条件可叠加；标题关键词使用顶部搜索框，
+       hidden 字段保证筛选切换时保留已输入的关键词） -->
+  <form method="get" action="{{ url_for('index') }}" class="bg-white rounded-lg shadow p-4 flex flex-wrap items-end gap-3">
+    <input type="hidden" name="keyword" value="{{ keyword }}">
+    <div>
+      <label class="block text-sm font-medium text-gray-700 mb-1">科目</label>
+      <select name="subject" class="border border-gray-300 rounded px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+        <option value="">全部</option>
+        {% for s in subjects %}
+        <option value="{{ s }}" {% if s == subject %}selected{% endif %}>{{ s }}</option>
         {% endfor %}
-      </ul>
-      {% else %}
-      <p class="px-4 py-10 text-center text-sm text-gray-400">暂无符合条件的试卷</p>
-      {% endif %}
+      </select>
     </div>
+    <div>
+      <label class="block text-sm font-medium text-gray-700 mb-1">难度</label>
+      <select name="difficulty" class="border border-gray-300 rounded px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+        <option value="">全部</option>
+        {% for d, label in difficulties.items() %}
+        <option value="{{ d }}" {% if d|string == difficulty %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white rounded px-4 py-2 text-sm">筛选</button>
+    <a href="{{ url_for('index') }}" class="text-gray-500 hover:text-gray-700 text-sm px-3 py-2">重置</a>
+  </form>
 
-    <!-- 分页（保留当前筛选参数） -->
-    {% if total_pages > 1 %}
-    <div class="flex items-center justify-center gap-2 mt-6">
-      {% if page > 1 %}
-      <a href="{{ url_for('index', page=page-1, keyword=keyword, subject=subject, difficulty=difficulty) }}"
-         class="px-3 py-1.5 border border-gray-300 rounded text-sm text-gray-600 hover:bg-gray-50">上一页</a>
-      {% endif %}
-      {% for p in range(1, total_pages + 1) %}
-        {% if p == page %}
-        <span class="px-3 py-1.5 rounded text-sm bg-blue-600 text-white">{{ p }}</span>
-        {% else %}
-        <a href="{{ url_for('index', page=p, keyword=keyword, subject=subject, difficulty=difficulty) }}"
-           class="px-3 py-1.5 border border-gray-300 rounded text-sm text-gray-600 hover:bg-gray-50">{{ p }}</a>
-        {% endif %}
-      {% endfor %}
-      {% if page < total_pages %}
-      <a href="{{ url_for('index', page=page+1, keyword=keyword, subject=subject, difficulty=difficulty) }}"
-         class="px-3 py-1.5 border border-gray-300 rounded text-sm text-gray-600 hover:bg-gray-50">下一页</a>
-      {% endif %}
+  <!-- 试卷列表 -->
+  <div class="bg-white rounded-lg shadow mt-4">
+    <div class="px-4 py-3 border-b border-gray-100 text-sm text-gray-500">
+      共 {{ total }} 条试卷{% if keyword %}（搜索“{{ keyword }}”）{% endif %}
     </div>
+    {% if papers %}
+    <ul class="divide-y divide-gray-100 px-4">
+      {% for paper in papers %}
+      <li class="py-3">
+        <a href="{{ url_for('paper_detail', paper_id=paper['id']) }}" class="text-sm font-medium text-gray-800 hover:text-blue-600">{{ paper['title'] }}</a>
+        <p class="text-xs text-gray-500 mt-1">
+          科目：{{ paper['subject'] }} · 年份：{{ paper['year'] }} · 难度：{{ difficulties[paper['difficulty']] }} · 来源：{{ paper['source_school'] or '—' }}
+        </p>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="px-4 py-10 text-center text-sm text-gray-400">
+      暂无符合条件的试卷{% if keyword or subject or difficulty %}，<a href="{{ url_for('index') }}" class="text-blue-600 hover:underline">清除筛选</a>{% endif %}
+    </p>
     {% endif %}
-  </main>
-</body>
-</html>
+  </div>
+
+  <!-- 分页（保留当前筛选参数） -->
+  {% if total_pages > 1 %}
+  <div class="flex items-center justify-center gap-2 mt-6">
+    {% if page > 1 %}
+    <a href="{{ url_for('index', page=page-1, keyword=keyword, subject=subject, difficulty=difficulty) }}"
+       class="px-3 py-1.5 border border-gray-300 rounded text-sm text-gray-600 hover:bg-gray-50">上一页</a>
+    {% endif %}
+    {% for p in range(1, total_pages + 1) %}
+      {% if p == page %}
+      <span class="px-3 py-1.5 rounded text-sm bg-blue-600 text-white">{{ p }}</span>
+      {% else %}
+      <a href="{{ url_for('index', page=p, keyword=keyword, subject=subject, difficulty=difficulty) }}"
+         class="px-3 py-1.5 border border-gray-300 rounded text-sm text-gray-600 hover:bg-gray-50">{{ p }}</a>
+      {% endif %}
+    {% endfor %}
+    {% if page < total_pages %}
+    <a href="{{ url_for('index', page=page+1, keyword=keyword, subject=subject, difficulty=difficulty) }}"
+       class="px-3 py-1.5 border border-gray-300 rounded text-sm text-gray-600 hover:bg-gray-50">下一页</a>
+    {% endif %}
+  </div>
+  {% endif %}
+{% endblock %}

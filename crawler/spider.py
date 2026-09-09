@@ -142,13 +142,18 @@ def _url_exists(db_path, source_url):
 def crawl(db_path, list_paths=None):
     """抓取列表页元数据并写入待审核表。返回新增条数。
 
-    流程：robots 检查 → 逐页抓取（限速）→ 解析 → 按 source_url 去重 → 写 pending_paper。
+    流程：逐个路径 robots 检查（任一被禁即中止）→ 逐页抓取（页间隔限速）→
+    解析 → 按 source_url 去重 → 写 pending_paper。
     """
     list_paths = list_paths or LIST_PATHS
-    if not robots_allowed(list_paths[0]):
-        raise RuntimeError("robots 协议禁止抓取目标路径，爬虫已中止")
-    added = 0
     for path in list_paths:
+        if not robots_allowed(path):
+            raise RuntimeError(f"robots 协议禁止抓取目标路径 {path}，爬虫已中止")
+    added = 0
+    for i, path in enumerate(list_paths):
+        if i:
+            # 页间限速：第一次请求前不等待，之后每次抓取前间隔 CRAWL_DELAY_SECONDS
+            time.sleep(CRAWL_DELAY_SECONDS)
         html = fetch_html(BASE_URL + path)
         for item in parse_papers(html):
             if item["source_url"] and not _url_exists(db_path, item["source_url"]):
@@ -161,5 +166,4 @@ def crawl(db_path, list_paths=None):
                     item["source_school"],
                 )
                 added += 1
-        time.sleep(CRAWL_DELAY_SECONDS)
     return added

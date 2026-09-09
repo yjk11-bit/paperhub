@@ -229,12 +229,21 @@ def profile():
 @app.route("/admin/pending")
 @admin_required
 def admin_pending():
-    """管理员待审核面板：查看爬虫采集的待审核元数据，审核通过入库或驳回删除。"""
-    pendings = models.query_pending_papers(app.config["DATABASE"])
+    """管理员待审核面板：分页查看爬虫采集的待审核元数据，审核通过入库或驳回删除。"""
+    try:
+        page = int(request.args.get("page", 1))
+    except ValueError:
+        page = 1
+    pendings, total, total_pages = models.query_pending_papers(
+        app.config["DATABASE"], page=page, per_page=10
+    )
     return render_template(
         "admin_pending.html",
         username=session.get("username"),
         pendings=pendings,
+        page=page,
+        total=total,
+        total_pages=total_pages,
         subjects=models.SUBJECTS,
         difficulties=models.DIFFICULTIES,
         levels=models.LEVELS,
@@ -244,7 +253,10 @@ def admin_pending():
 @app.route("/admin/pending/<int:pending_id>/approve", methods=["POST"])
 @admin_required
 def approve_pending(pending_id):
-    """审核通过：校验表单字段后把待审核元数据转正入库 paper 表。"""
+    """审核通过：校验表单字段后把待审核元数据转正入库 paper 表。
+
+    操作成功后停留在原分页（page 查询参数）；页码非法时回落第 1 页。
+    """
     pending = models.get_pending_paper_by_id(app.config["DATABASE"], pending_id)
     if pending is None:
         abort(404)
@@ -262,6 +274,8 @@ def approve_pending(pending_id):
 
     if not title or not source_url or not year or not difficulty:
         error = "标题、来源链接、年份、难度均不能为空"
+    elif not (2000 <= year <= 2100):
+        error = "年份需在 2000 至 2100 之间"
     elif subject not in models.SUBJECTS:
         error = "学科无效，请从列表中选择"
     elif difficulty not in models.DIFFICULTIES:
@@ -273,11 +287,22 @@ def approve_pending(pending_id):
             app.config["DATABASE"], pending_id, title, subject, year, difficulty,
             level, has_answer, source_url, pending["source_school"],
         )
-        return redirect(url_for("admin_pending"))
+        return redirect(url_for("admin_pending", page=request.args.get("page", 1)))
+
+    try:
+        page = int(request.args.get("page", 1))
+    except ValueError:
+        page = 1
+    pendings, total, total_pages = models.query_pending_papers(
+        app.config["DATABASE"], page=page, per_page=10
+    )
     return render_template(
         "admin_pending.html",
         username=session.get("username"),
-        pendings=models.query_pending_papers(app.config["DATABASE"]),
+        pendings=pendings,
+        page=page,
+        total=total,
+        total_pages=total_pages,
         subjects=models.SUBJECTS,
         difficulties=models.DIFFICULTIES,
         levels=models.LEVELS,
@@ -288,15 +313,18 @@ def approve_pending(pending_id):
 @app.route("/admin/pending/<int:pending_id>/reject", methods=["POST"])
 @admin_required
 def reject_pending(pending_id):
-    """审核驳回：删除待审核记录。"""
+    """审核驳回：删除待审核记录。操作成功后停留在原分页。"""
     if not models.delete_pending_paper(app.config["DATABASE"], pending_id):
         abort(404)
-    return redirect(url_for("admin_pending"))
+    return redirect(url_for("admin_pending", page=request.args.get("page", 1)))
 
 
 @app.route("/register", methods=["GET", "POST"])
 def register():
     """用户注册：用户名不能重复，用户名、密码不能为空，密码哈希存储。"""
+    if "user_id" in session:
+        # 已登录用户访问注册页：直接回题库
+        return redirect(url_for("index"))
     if request.method == "POST":
         username = request.form.get("username", "").strip()
         password = request.form.get("password", "")
@@ -316,6 +344,9 @@ def register():
 @app.route("/login", methods=["GET", "POST"])
 def login():
     """用户登录：用户名存在 + 密码哈希匹配，登录成功写入 session。"""
+    if "user_id" in session:
+        # 已登录用户访问登录页：直接回题库
+        return redirect(url_for("index"))
     if request.method == "POST":
         username = request.form.get("username", "").strip()
         password = request.form.get("password", "")

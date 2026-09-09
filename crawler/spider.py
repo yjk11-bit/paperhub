@@ -21,8 +21,8 @@ from bs4 import BeautifulSoup
 import models
 
 BASE_URL = "https://www.51test.net"
-# 列表页路径：高考真题 / 高考模拟试题
-LIST_PATHS = ["/gaokao/gkst/", "/gaokao/st/"]
+# 列表页路径：高考真题(gkst) / 高考模拟试题(st) / 高考真题频道(zt)
+LIST_PATHS = ["/gaokao/gkst/", "/gaokao/st/", "/gaokao/zt/"]
 # 限速：每两次请求间隔秒数
 CRAWL_DELAY_SECONDS = 2
 TIMEOUT = 15
@@ -109,6 +109,10 @@ def parse_papers(html, base_url=BASE_URL):
         title = a.get_text(strip=True)
         if (not title or title in _GENERIC_LABELS
                 or ("试题" not in title and "试卷" not in title)):
+            continue
+        # 描述性链接（"无忧考网…整理发布…欢迎浏览，仅供参考…来源：…"）
+        # 不是试卷标题；同一 URL 通常另有短标题链接，跳过不丢数据。
+        if "无忧考网" in title or "欢迎浏览" in title or "来源：" in title:
             continue
         year_match = _YEAR_RE.search(title)
         subject = next(

@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>我的收藏 - PaperHub</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="min-h-screen bg-gray-100">
+  <header class="bg-white shadow">
+    <div class="max-w-4xl mx-auto px-4 py-4 flex items-center justify-between">
+      <h1 class="text-lg font-bold text-gray-800">PaperHub 高中精品试卷库</h1>
+      <div class="text-sm text-gray-600 flex items-center gap-3">
+        <span>{{ username }}</span>
+        <a href="{{ url_for('index') }}" class="text-blue-600 hover:underline">题库</a>
+        <a href="{{ url_for('my_collects') }}" class="text-blue-600 hover:underline">我的收藏</a>
+        <a href="{{ url_for('logout') }}" class="text-blue-600 hover:underline">退出登录</a>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-4xl mx-auto px-4 py-6">
+    <h2 class="text-lg font-bold text-gray-800 mb-4">我的收藏</h2>
+
+    <div class="bg-white rounded-lg shadow">
+      <div class="px-4 py-3 border-b border-gray-100 text-sm text-gray-500">共收藏 {{ total }} 条试卷</div>
+      {% if papers %}
+      <ul class="divide-y divide-gray-100 px-4">
+        {% for paper in papers %}
+        <li class="paper-item py-3">
+          <a href="{{ url_for('paper_detail', paper_id=paper['id']) }}" class="text-sm font-medium text-gray-800 hover:text-blue-600">{{ paper['title'] }}</a>
+          <p class="text-xs text-gray-500 mt-1">
+            科目：{{ paper['subject'] }} · 年份：{{ paper['year'] }} · 难度：{{ difficulties[paper['difficulty']] }} · 来源：{{ paper['source_school'] or '—' }}
+          </p>
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <p class="px-4 py-10 text-center text-sm text-gray-400">还没有收藏任何试卷，去<a href="{{ url_for('index') }}" class="text-blue-600 hover:underline">题库</a>看看吧</p>
+      {% endif %}
+    </div>
+
+    <!-- 分页 -->
+    {% if total_pages > 1 %}
+    <div class="flex items-center justify-center gap-2 mt-6">
+      {% if page > 1 %}
+      <a href="{{ url_for('my_collects', page=page-1) }}"
+         class="px-3 py-1.5 border border-gray-300 rounded text-sm text-gray-600 hover:bg-gray-50">上一页</a>
+      {% endif %}
+      {% for p in range(1, total_pages + 1) %}
+        {% if p == page %}
+        <span class="px-3 py-1.5 rounded text-sm bg-blue-600 text-white">{{ p }}</span>
+        {% else %}
+        <a href="{{ url_for('my_collects', page=p) }}"
+           class="px-3 py-1.5 border border-gray-300 rounded text-sm text-gray-600 hover:bg-gray-50">{{ p }}</a>
+        {% endif %}
+      {% endfor %}
+      {% if page < total_pages %}
+      <a href="{{ url_for('my_collects', page=page+1) }}"
+         class="px-3 py-1.5 border border-gray-300 rounded text-sm text-gray-600 hover:bg-gray-50">下一页</a>
+      {% endif %}
+    </div>
+    {% endif %}
+  </main>
+</body>
+</html>

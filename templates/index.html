@@ -12,6 +12,7 @@
       <h1 class="text-lg font-bold text-gray-800">PaperHub 高中精品试卷库</h1>
       <div class="text-sm text-gray-600 flex items-center gap-3">
         <span>{{ username }}</span>
+        <a href="{{ url_for('my_collects') }}" class="text-blue-600 hover:underline">我的收藏</a>
         <a href="{{ url_for('logout') }}" class="text-blue-600 hover:underline">退出登录</a>
       </div>
     </div>
@@ -54,7 +55,7 @@
       <ul class="divide-y divide-gray-100 px-4">
         {% for paper in papers %}
         <li class="paper-item py-3">
-          <p class="text-sm font-medium text-gray-800">{{ paper['title'] }}</p>
+          <a href="{{ url_for('paper_detail', paper_id=paper['id']) }}" class="text-sm font-medium text-gray-800 hover:text-blue-600">{{ paper['title'] }}</a>
           <p class="text-xs text-gray-500 mt-1">
             科目：{{ paper['subject'] }} · 年份：{{ paper['year'] }} · 难度：{{ difficulties[paper['difficulty']] }} · 来源：{{ paper['source_school'] or '—' }}
           </p>

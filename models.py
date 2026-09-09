@@ -162,3 +162,80 @@ def query_papers(db_path, keyword=None, subject=None, difficulty=None,
         return rows, total, total_pages
     finally:
         conn.close()
+
+
+def get_paper_by_id(db_path, paper_id):
+    """按 id 查询单条试卷，不存在返回 None。"""
+    conn = get_db(db_path)
+    try:
+        return conn.execute(
+            "SELECT * FROM paper WHERE id = ?", (paper_id,)
+        ).fetchone()
+    finally:
+        conn.close()
+
+
+def is_collected(db_path, user_id, paper_id):
+    """判断用户是否已收藏该试卷。"""
+    conn = get_db(db_path)
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM collect WHERE user_id = ? AND paper_id = ?",
+            (user_id, paper_id),
+        ).fetchone()
+        return row is not None
+    finally:
+        conn.close()
+
+
+def add_collect(db_path, user_id, paper_id):
+    """收藏试卷。已收藏时拦截不重复插入，返回 False；成功返回 True。"""
+    conn = get_db(db_path)
+    try:
+        if conn.execute(
+            "SELECT 1 FROM collect WHERE user_id = ? AND paper_id = ?",
+            (user_id, paper_id),
+        ).fetchone():
+            return False
+        conn.execute(
+            "INSERT INTO collect (user_id, paper_id) VALUES (?, ?)",
+            (user_id, paper_id),
+        )
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+
+def remove_collect(db_path, user_id, paper_id):
+    """取消收藏。返回是否确实删除了记录。"""
+    conn = get_db(db_path)
+    try:
+        cur = conn.execute(
+            "DELETE FROM collect WHERE user_id = ? AND paper_id = ?",
+            (user_id, paper_id),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def query_user_collects(db_path, user_id, page=1, per_page=10):
+    """分页查询用户收藏的试卷（JOIN paper），返回 (papers, total, total_pages)。"""
+    conn = get_db(db_path)
+    try:
+        total = conn.execute(
+            "SELECT COUNT(*) FROM collect WHERE user_id = ?", (user_id,)
+        ).fetchone()[0]
+        total_pages = max(1, math.ceil(total / per_page))
+        page = min(max(1, page), total_pages)
+        rows = conn.execute(
+            "SELECT paper.* FROM collect JOIN paper ON paper.id = collect.paper_id"
+            " WHERE collect.user_id = ?"
+            " ORDER BY collect.collect_time DESC, collect.id DESC LIMIT ? OFFSET ?",
+            (user_id, per_page, (page - 1) * per_page),
+        ).fetchall()
+        return rows, total, total_pages
+    finally:
+        conn.close()

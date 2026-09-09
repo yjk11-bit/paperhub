@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ paper['title'] }} - PaperHub</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="min-h-screen bg-gray-100">
+  <header class="bg-white shadow">
+    <div class="max-w-3xl mx-auto px-4 py-4 flex items-center justify-between">
+      <h1 class="text-lg font-bold text-gray-800">PaperHub 高中精品试卷库</h1>
+      <div class="text-sm text-gray-600 flex items-center gap-3">
+        <span>{{ username }}</span>
+        <a href="{{ url_for('index') }}" class="text-blue-600 hover:underline">题库</a>
+        <a href="{{ url_for('my_collects') }}" class="text-blue-600 hover:underline">我的收藏</a>
+        <a href="{{ url_for('logout') }}" class="text-blue-600 hover:underline">退出登录</a>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-3xl mx-auto px-4 py-6">
+    <a href="{{ url_for('index') }}" class="text-sm text-gray-500 hover:text-gray-700">&larr; 返回题库</a>
+
+    <div class="bg-white rounded-lg shadow mt-3 p-6">
+      <h2 class="text-xl font-bold text-gray-800">{{ paper['title'] }}</h2>
+      <dl class="mt-4 space-y-2 text-sm text-gray-600">
+        <div class="flex">
+          <dt class="w-24 shrink-0 text-gray-400">科目</dt>
+          <dd>{{ paper['subject'] }}</dd>
+        </div>
+        <div class="flex">
+          <dt class="w-24 shrink-0 text-gray-400">年份</dt>
+          <dd>{{ paper['year'] }}</dd>
+        </div>
+        <div class="flex">
+          <dt class="w-24 shrink-0 text-gray-400">难度</dt>
+          <dd>{{ difficulties[paper['difficulty']] }}</dd>
+        </div>
+        <div class="flex">
+          <dt class="w-24 shrink-0 text-gray-400">试卷等级</dt>
+          <dd>{{ paper['level'] }}</dd>
+        </div>
+        <div class="flex">
+          <dt class="w-24 shrink-0 text-gray-400">是否带解析</dt>
+          <dd>{{ '有解析' if paper['has_answer'] else '无解析' }}</dd>
+        </div>
+        <div class="flex">
+          <dt class="w-24 shrink-0 text-gray-400">来源</dt>
+          <dd>{{ paper['source_school'] or '—' }}</dd>
+        </div>
+        <div class="flex">
+          <dt class="w-24 shrink-0 text-gray-400">录入时间</dt>
+          <dd>{{ paper['create_time'] }}</dd>
+        </div>
+      </dl>
+
+      <div class="mt-6 flex items-center gap-3">
+        <a href="{{ paper['source_url'] }}" target="_blank" rel="noopener noreferrer"
+           class="bg-blue-600 hover:bg-blue-700 text-white rounded px-4 py-2 text-sm">前往源站查看</a>
+        {% if collected %}
+        <form method="post" action="{{ url_for('toggle_collect', paper_id=paper['id']) }}">
+          <button type="submit" class="bg-gray-200 hover:bg-gray-300 text-gray-700 rounded px-4 py-2 text-sm">取消收藏</button>
+        </form>
+        {% else %}
+        <form method="post" action="{{ url_for('toggle_collect', paper_id=paper['id']) }}">
+          <button type="submit" class="bg-amber-500 hover:bg-amber-600 text-white rounded px-4 py-2 text-sm">收藏</button>
+        </form>
+        {% endif %}
+      </div>
+    </div>
+  </main>
+</body>
+</html>

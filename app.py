@@ -4,7 +4,7 @@
 """
 from functools import wraps
 
-from flask import Flask, redirect, render_template, request, session, url_for
+from flask import Flask, abort, redirect, render_template, request, session, url_for
 
 import config
 import models
@@ -67,6 +67,61 @@ def index():
         subject=subject,
         difficulty=difficulty,
         subjects=models.SUBJECTS,
+        difficulties=models.DIFFICULTIES,
+    )
+
+
+@app.route("/paper/<int:paper_id>")
+@login_required
+def paper_detail(paper_id):
+    """试卷详情页（需登录）：展示完整试卷信息 + 收藏/取消收藏。"""
+    paper = models.get_paper_by_id(app.config["DATABASE"], paper_id)
+    if paper is None:
+        abort(404)
+    collected = models.is_collected(
+        app.config["DATABASE"], session["user_id"], paper_id
+    )
+    return render_template(
+        "paper_detail.html",
+        username=session.get("username"),
+        paper=paper,
+        collected=collected,
+        difficulties=models.DIFFICULTIES,
+    )
+
+
+@app.route("/paper/<int:paper_id>/collect", methods=["POST"])
+@login_required
+def toggle_collect(paper_id):
+    """收藏/取消收藏切换（需登录）：同一用户不会重复收藏同一份试卷。"""
+    if models.get_paper_by_id(app.config["DATABASE"], paper_id) is None:
+        abort(404)
+    user_id = session["user_id"]
+    if models.is_collected(app.config["DATABASE"], user_id, paper_id):
+        models.remove_collect(app.config["DATABASE"], user_id, paper_id)
+    else:
+        models.add_collect(app.config["DATABASE"], user_id, paper_id)
+    return redirect(url_for("paper_detail", paper_id=paper_id))
+
+
+@app.route("/collects")
+@login_required
+def my_collects():
+    """我的收藏（需登录）：分页展示当前登录用户收藏的试卷。"""
+    try:
+        page = int(request.args.get("page", 1))
+    except ValueError:
+        page = 1
+    papers, total, total_pages = models.query_user_collects(
+        app.config["DATABASE"], session["user_id"], page=page, per_page=10
+    )
+    return render_template(
+        "collects.html",
+        username=session.get("username"),
+        papers=papers,
+        page=page,
+        total=total,
+        total_pages=total_pages,
         difficulties=models.DIFFICULTIES,
     )
 

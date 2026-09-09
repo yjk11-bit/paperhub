@@ -50,6 +50,9 @@ _SUBJECT_KEYWORDS = {
     "地理": "地理",
     "政治": "政治",
 }
+# 列表页表格里的下载按钮文字（如"试题""答案""作文"），不是试卷标题，
+# 且其指向的详情页可能已失效（404），一律跳过不采集。
+_GENERIC_LABELS = {"试题", "答案", "作文", "试卷", "下载"}
 
 
 def robots_allowed(path):
@@ -104,7 +107,8 @@ def parse_papers(html, base_url=BASE_URL):
     for a in soup.select("a[href*='/show/']"):
         href = urllib.parse.urljoin(base_url, a["href"])
         title = a.get_text(strip=True)
-        if not title or ("试题" not in title and "试卷" not in title):
+        if (not title or title in _GENERIC_LABELS
+                or ("试题" not in title and "试卷" not in title)):
             continue
         year_match = _YEAR_RE.search(title)
         subject = next(

@@ -106,6 +106,9 @@ def parse_papers(html, base_url=BASE_URL):
     papers = []
     for a in soup.select("a[href*='/show/']"):
         href = urllib.parse.urljoin(base_url, a["href"])
+        # source_url 只允许保存网页地址，指向 PDF 文件的链接一律跳过
+        if href.lower().endswith(".pdf"):
+            continue
         title = a.get_text(strip=True)
         if (not title or title in _GENERIC_LABELS
                 or ("试题" not in title and "试卷" not in title)):

@@ -28,7 +28,8 @@ CREATE TABLE IF NOT EXISTS paper (
 CREATE TABLE IF NOT EXISTS user (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     username      TEXT UNIQUE NOT NULL,
-    password_hash TEXT NOT NULL                           -- 加密存储密码，禁止明文
+    password_hash TEXT NOT NULL,                          -- 加密存储密码，禁止明文
+    create_time   DATETIME DEFAULT CURRENT_TIMESTAMP      -- 注册时间（个人中心展示）
 );
 
 CREATE TABLE IF NOT EXISTS collect (
@@ -75,6 +76,11 @@ def init_db(db_path):
     conn = get_db(db_path)
     try:
         conn.executescript(_SCHEMA_SQL)
+        # 旧库迁移：user 表补充 create_time 列（个人中心展示注册时间）。
+        # 老用户该字段为 NULL，页面显示 "—"；新注册用户由 create_user 写入。
+        user_cols = [row[1] for row in conn.execute("PRAGMA table_info(user)")]
+        if "create_time" not in user_cols:
+            conn.execute("ALTER TABLE user ADD COLUMN create_time DATETIME")
         conn.commit()
     finally:
         conn.close()
@@ -98,11 +104,23 @@ def create_user(db_path, username, password):
     conn = get_db(db_path)
     try:
         cur = conn.execute(
-            "INSERT INTO user (username, password_hash) VALUES (?, ?)",
+            "INSERT INTO user (username, password_hash, create_time)"
+            " VALUES (?, ?, CURRENT_TIMESTAMP)",
             (username, hash_password(password)),
         )
         conn.commit()
         return cur.lastrowid
+    finally:
+        conn.close()
+
+
+def get_user_by_id(db_path, user_id):
+    """按 id 查询用户，不存在返回 None。"""
+    conn = get_db(db_path)
+    try:
+        return conn.execute(
+            "SELECT * FROM user WHERE id = ?", (user_id,)
+        ).fetchone()
     finally:
         conn.close()
 
@@ -237,5 +255,72 @@ def query_user_collects(db_path, user_id, page=1, per_page=10):
             (user_id, per_page, (page - 1) * per_page),
         ).fetchall()
         return rows, total, total_pages
+    finally:
+        conn.close()
+
+
+def add_view_history(db_path, user_id, paper_id):
+    """记录一次试卷浏览：同一用户对同一试卷只保留最新一条记录（先删旧再插入）。"""
+    conn = get_db(db_path)
+    try:
+        conn.execute(
+            "DELETE FROM view_history WHERE user_id = ? AND paper_id = ?",
+            (user_id, paper_id),
+        )
+        conn.execute(
+            "INSERT INTO view_history (user_id, paper_id) VALUES (?, ?)",
+            (user_id, paper_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def query_view_history(db_path, user_id, page=1, per_page=10):
+    """分页查询当前用户的浏览历史（JOIN paper，按浏览时间倒序）。
+
+    返回 (rows, total, total_pages)。rows 中 history_id 为浏览记录 id，
+    id 为试卷 id，view_time 为最近一次浏览时间。
+    """
+    conn = get_db(db_path)
+    try:
+        total = conn.execute(
+            "SELECT COUNT(*) FROM view_history WHERE user_id = ?", (user_id,)
+        ).fetchone()[0]
+        total_pages = max(1, math.ceil(total / per_page))
+        page = min(max(1, page), total_pages)
+        rows = conn.execute(
+            "SELECT p.*, vh.id AS history_id, vh.view_time"
+            " FROM view_history vh JOIN paper p ON p.id = vh.paper_id"
+            " WHERE vh.user_id = ?"
+            " ORDER BY vh.view_time DESC, vh.id DESC LIMIT ? OFFSET ?",
+            (user_id, per_page, (page - 1) * per_page),
+        ).fetchall()
+        return rows, total, total_pages
+    finally:
+        conn.close()
+
+
+def delete_view_history(db_path, user_id, history_id):
+    """删除一条浏览记录（仅限本人的记录）。返回是否确实删除了记录。"""
+    conn = get_db(db_path)
+    try:
+        cur = conn.execute(
+            "DELETE FROM view_history WHERE id = ? AND user_id = ?",
+            (history_id, user_id),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def clear_view_history(db_path, user_id):
+    """清空当前用户的全部浏览历史。返回删除的记录条数。"""
+    conn = get_db(db_path)
+    try:
+        cur = conn.execute("DELETE FROM view_history WHERE user_id = ?", (user_id,))
+        conn.commit()
+        return cur.rowcount
     finally:
         conn.close()

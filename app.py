@@ -74,10 +74,14 @@ def index():
 @app.route("/paper/<int:paper_id>")
 @login_required
 def paper_detail(paper_id):
-    """试卷详情页（需登录）：展示完整试卷信息 + 收藏/取消收藏。"""
+    """试卷详情页（需登录）：展示完整试卷信息 + 收藏/取消收藏。
+
+    每打开一次详情页自动记录浏览历史；同一用户同一试卷只保留最新一条记录。
+    """
     paper = models.get_paper_by_id(app.config["DATABASE"], paper_id)
     if paper is None:
         abort(404)
+    models.add_view_history(app.config["DATABASE"], session["user_id"], paper_id)
     collected = models.is_collected(
         app.config["DATABASE"], session["user_id"], paper_id
     )
@@ -123,6 +127,61 @@ def my_collects():
         total=total,
         total_pages=total_pages,
         difficulties=models.DIFFICULTIES,
+    )
+
+
+@app.route("/history")
+@login_required
+def browsing_history():
+    """我的浏览历史（需登录）：按浏览时间倒序分页展示，每页 10 条，只显示本人记录。"""
+    try:
+        page = int(request.args.get("page", 1))
+    except ValueError:
+        page = 1
+    rows, total, total_pages = models.query_view_history(
+        app.config["DATABASE"], session["user_id"], page=page, per_page=10
+    )
+    return render_template(
+        "history.html",
+        username=session.get("username"),
+        rows=rows,
+        page=page,
+        total=total,
+        total_pages=total_pages,
+        difficulties=models.DIFFICULTIES,
+    )
+
+
+@app.route("/history/<int:history_id>/delete", methods=["POST"])
+@login_required
+def delete_history(history_id):
+    """删除一条浏览记录（需登录，仅能删除本人的记录，否则 404）。"""
+    if not models.delete_view_history(
+        app.config["DATABASE"], session["user_id"], history_id
+    ):
+        abort(404)
+    return redirect(url_for("browsing_history"))
+
+
+@app.route("/history/clear", methods=["POST"])
+@login_required
+def clear_history():
+    """一键清空浏览历史（需登录，仅清空本人的记录）。"""
+    models.clear_view_history(app.config["DATABASE"], session["user_id"])
+    return redirect(url_for("browsing_history"))
+
+
+@app.route("/profile")
+@login_required
+def profile():
+    """个人中心（需登录）：展示用户名、注册时间，提供收藏与浏览历史入口。"""
+    user = models.get_user_by_id(app.config["DATABASE"], session["user_id"])
+    if user is None:
+        # 会话中的用户已被删除：清除会话回登录页
+        session.clear()
+        return redirect(url_for("login"))
+    return render_template(
+        "profile.html", username=session.get("username"), user=user
     )
 
 

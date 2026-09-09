@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>个人中心 - PaperHub</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="min-h-screen bg-gray-100">
+  <header class="bg-white shadow">
+    <div class="max-w-4xl mx-auto px-4 py-4 flex items-center justify-between">
+      <h1 class="text-lg font-bold text-gray-800">PaperHub 高中精品试卷库</h1>
+      <div class="text-sm text-gray-600 flex items-center gap-3">
+        <span>{{ username }}</span>
+        <a href="{{ url_for('index') }}" class="text-blue-600 hover:underline">题库</a>
+        <a href="{{ url_for('my_collects') }}" class="text-blue-600 hover:underline">我的收藏</a>
+        <a href="{{ url_for('profile') }}" class="text-blue-600 hover:underline">个人中心</a>
+        <a href="{{ url_for('logout') }}" class="text-blue-600 hover:underline">退出登录</a>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-4xl mx-auto px-4 py-6">
+    <h2 class="text-lg font-bold text-gray-800 mb-4">个人中心</h2>
+
+    <div class="bg-white rounded-lg shadow p-6">
+      <dl class="space-y-2 text-sm text-gray-600">
+        <div class="flex">
+          <dt class="w-24 shrink-0 text-gray-400">用户名</dt>
+          <dd>{{ user['username'] }}</dd>
+        </div>
+        <div class="flex">
+          <dt class="w-24 shrink-0 text-gray-400">注册时间</dt>
+          <dd>{{ user['create_time'] or '—' }}</dd>
+        </div>
+      </dl>
+    </div>
+
+    <div class="grid grid-cols-2 gap-4 mt-4">
+      <a href="{{ url_for('my_collects') }}" class="bg-white rounded-lg shadow p-6 text-center hover:shadow-md">
+        <div class="text-lg font-bold text-gray-800">我的收藏</div>
+        <div class="text-sm text-gray-500 mt-1">查看收藏的试卷</div>
+      </a>
+      <a href="{{ url_for('browsing_history') }}" class="bg-white rounded-lg shadow p-6 text-center hover:shadow-md">
+        <div class="text-lg font-bold text-gray-800">我的浏览历史</div>
+        <div class="text-sm text-gray-500 mt-1">查看最近浏览的试卷</div>
+      </a>
+    </div>
+  </main>
+</body>
+</html>

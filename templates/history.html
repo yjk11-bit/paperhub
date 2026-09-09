@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>我的收藏 - PaperHub</title>
+  <title>我的浏览历史 - PaperHub</title>
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="min-h-screen bg-gray-100">
@@ -21,23 +21,36 @@
   </header>
 
   <main class="max-w-4xl mx-auto px-4 py-6">
-    <h2 class="text-lg font-bold text-gray-800 mb-4">我的收藏</h2>
+    <h2 class="text-lg font-bold text-gray-800 mb-4">我的浏览历史</h2>
 
     <div class="bg-white rounded-lg shadow">
-      <div class="px-4 py-3 border-b border-gray-100 text-sm text-gray-500">共收藏 {{ total }} 条试卷</div>
-      {% if papers %}
+      <div class="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+        <span class="text-sm text-gray-500">共 {{ total }} 条浏览记录</span>
+        {% if rows %}
+        <form method="post" action="{{ url_for('clear_history') }}"
+              onsubmit="return confirm('确定要清空全部浏览历史吗？');">
+          <button type="submit" class="text-sm text-red-500 hover:text-red-600">清空全部</button>
+        </form>
+        {% endif %}
+      </div>
+      {% if rows %}
       <ul class="divide-y divide-gray-100 px-4">
-        {% for paper in papers %}
-        <li class="paper-item py-3">
-          <a href="{{ url_for('paper_detail', paper_id=paper['id']) }}" class="text-sm font-medium text-gray-800 hover:text-blue-600">{{ paper['title'] }}</a>
-          <p class="text-xs text-gray-500 mt-1">
-            科目：{{ paper['subject'] }} · 年份：{{ paper['year'] }} · 难度：{{ difficulties[paper['difficulty']] }} · 来源：{{ paper['source_school'] or '—' }}
-          </p>
+        {% for row in rows %}
+        <li class="py-3 flex items-center justify-between gap-3">
+          <div class="min-w-0">
+            <a href="{{ url_for('paper_detail', paper_id=row['id']) }}" class="text-sm font-medium text-gray-800 hover:text-blue-600">{{ row['title'] }}</a>
+            <p class="text-xs text-gray-500 mt-1">
+              科目：{{ row['subject'] }} · 年份：{{ row['year'] }} · 难度：{{ difficulties[row['difficulty']] }} · 浏览于 {{ row['view_time'] }}
+            </p>
+          </div>
+          <form method="post" action="{{ url_for('delete_history', history_id=row['history_id']) }}">
+            <button type="submit" class="text-xs text-gray-400 hover:text-red-500 shrink-0">删除</button>
+          </form>
         </li>
         {% endfor %}
       </ul>
       {% else %}
-      <p class="px-4 py-10 text-center text-sm text-gray-400">还没有收藏任何试卷，去<a href="{{ url_for('index') }}" class="text-blue-600 hover:underline">题库</a>看看吧</p>
+      <p class="px-4 py-10 text-center text-sm text-gray-400">还没有浏览记录，去<a href="{{ url_for('index') }}" class="text-blue-600 hover:underline">题库</a>看看吧</p>
       {% endif %}
     </div>
 
@@ -45,19 +58,19 @@
     {% if total_pages > 1 %}
     <div class="flex items-center justify-center gap-2 mt-6">
       {% if page > 1 %}
-      <a href="{{ url_for('my_collects', page=page-1) }}"
+      <a href="{{ url_for('browsing_history', page=page-1) }}"
          class="px-3 py-1.5 border border-gray-300 rounded text-sm text-gray-600 hover:bg-gray-50">上一页</a>
       {% endif %}
       {% for p in range(1, total_pages + 1) %}
         {% if p == page %}
         <span class="px-3 py-1.5 rounded text-sm bg-blue-600 text-white">{{ p }}</span>
         {% else %}
-        <a href="{{ url_for('my_collects', page=p) }}"
+        <a href="{{ url_for('browsing_history', page=p) }}"
            class="px-3 py-1.5 border border-gray-300 rounded text-sm text-gray-600 hover:bg-gray-50">{{ p }}</a>
         {% endif %}
       {% endfor %}
       {% if page < total_pages %}
-      <a href="{{ url_for('my_collects', page=page+1) }}"
+      <a href="{{ url_for('browsing_history', page=page+1) }}"
          class="px-3 py-1.5 border border-gray-300 rounded text-sm text-gray-600 hover:bg-gray-50">下一页</a>
       {% endif %}
     </div>

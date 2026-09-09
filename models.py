@@ -87,3 +87,31 @@ def hash_password(password):
 def check_password(password_hash, password):
     """校验密码与哈希是否匹配。"""
     return check_password_hash(password_hash, password)
+
+
+def create_user(db_path, username, password):
+    """创建用户：密码使用 hash_password 哈希后存储，禁止明文。
+
+    返回新用户的 id；用户名重复时抛出 sqlite3.IntegrityError（路由层应先行查重）。
+    """
+    conn = get_db(db_path)
+    try:
+        cur = conn.execute(
+            "INSERT INTO user (username, password_hash) VALUES (?, ?)",
+            (username, hash_password(password)),
+        )
+        conn.commit()
+        return cur.lastrowid
+    finally:
+        conn.close()
+
+
+def get_user_by_username(db_path, username):
+    """按用户名查询用户，不存在返回 None。"""
+    conn = get_db(db_path)
+    try:
+        return conn.execute(
+            "SELECT * FROM user WHERE username = ?", (username,)
+        ).fetchone()
+    finally:
+        conn.close()

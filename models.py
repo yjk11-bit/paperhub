@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS paper (
     title         TEXT NOT NULL,                          -- 试卷完整标题
     subject       TEXT NOT NULL,                          -- 学科：语文/数学/英语/物理/化学/生物/历史/地理/政治
     year          INTEGER NOT NULL,                       -- 试卷年份，例：2025
+    grade         TEXT NOT NULL DEFAULT '',               -- 年级：高一/高二/高三，空=未标注
     difficulty    INTEGER NOT NULL,                       -- 难度：1=基础 2=中档 3=拔高 4=竞赛级
     level         TEXT NOT NULL,                          -- 含金量等级：高考真题/省级统考/名校联考/地市统考/优质模考
     has_answer    BOOLEAN NOT NULL,                       -- 是否附带完整解析
@@ -87,6 +88,23 @@ def init_db(db_path):
             conn.execute(
                 "ALTER TABLE user ADD COLUMN is_admin BOOLEAN NOT NULL DEFAULT 0"
             )
+        # 旧库迁移：paper 表补充 grade 列（首页年级筛选）。
+        paper_cols = [row[1] for row in conn.execute("PRAGMA table_info(paper)")]
+        if "grade" not in paper_cols:
+            conn.execute(
+                "ALTER TABLE paper ADD COLUMN grade TEXT NOT NULL DEFAULT ''"
+            )
+            # 存量试卷从标题推断年级：含"高一/高二"直接归属；
+            # 含"高考/高三"归高三；推断不出的留空（不参与年级筛选，
+            # 管理员审核或后续编辑时可补充）。
+            conn.execute(
+                "UPDATE paper SET grade = CASE"
+                " WHEN title LIKE '%高一%' THEN '高一'"
+                " WHEN title LIKE '%高二%' THEN '高二'"
+                " WHEN title LIKE '%高三%' OR title LIKE '%高考%' THEN '高三'"
+                " ELSE grade END"
+                " WHERE grade = ''"
+            )
         conn.commit()
     finally:
         conn.close()
@@ -145,8 +163,13 @@ def get_user_by_username(db_path, username):
 # 学科与难度枚举（与项目方案文档一致）
 SUBJECTS = ["语文", "数学", "英语", "物理", "化学", "生物", "历史", "地理", "政治"]
 DIFFICULTIES = {1: "基础", 2: "中档", 3: "拔高", 4: "竞赛级"}
+# 年级枚举（空字符串 = 未标注，不参与年级筛选）
+GRADES = ["高一", "高二", "高三"]
 # 试卷含金量等级（与项目方案文档一致）
 LEVELS = ["高考真题", "省级统考", "名校联考", "地市统考", "优质模考"]
+# 题库列表页允许的排序字段白名单（列名 → 界面文案）。
+# ORDER BY 无法参数化，列名与方向都经白名单校验，杜绝 SQL 注入。
+PAPER_SORT_COLUMNS = {"year": "年份", "difficulty": "难度", "create_time": "上传时间"}
 
 
 def _escape_like(keyword):
@@ -160,8 +183,10 @@ def _escape_like(keyword):
 
 
 def query_papers(db_path, keyword=None, subject=None, difficulty=None,
-                 page=1, per_page=10):
-    """分页查询试卷：标题关键词模糊搜索 + 科目 + 难度筛选（条件可叠加）。
+                 grade=None, year=None, school=None, page=1, per_page=10,
+                 sort="create_time", order="desc"):
+    """分页查询试卷：标题关键词模糊搜索 + 科目/年级/年份/难度筛选 + 来源学校
+    模糊搜索（条件可叠加），支持按年份/难度/上传时间升序或降序排序。
 
     返回 (papers, total, total_pages)。页码越界时收敛到最后一页。
     """
@@ -181,7 +206,26 @@ def query_papers(db_path, keyword=None, subject=None, difficulty=None,
         if d is not None:
             where.append("difficulty = ?")
             params.append(d)
+    if grade:
+        where.append("grade = ?")
+        params.append(grade)
+    if year:
+        try:
+            y = int(year)
+        except ValueError:
+            y = None  # 非法年份参数，忽略该筛选条件
+        if y is not None:
+            where.append("year = ?")
+            params.append(y)
+    if school:
+        where.append("source_school LIKE ? ESCAPE '\\'")
+        params.append(f"%{_escape_like(school)}%")
     where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+
+    # 排序：ORDER BY 无法参数化，列名与方向经白名单校验后拼接（防注入），
+    # 非法值回落到默认"按上传时间倒序"。
+    sort_col = sort if sort in PAPER_SORT_COLUMNS else "create_time"
+    sort_dir = order if order in ("asc", "desc") else "desc"
 
     conn = get_db(db_path)
     try:
@@ -192,7 +236,7 @@ def query_papers(db_path, keyword=None, subject=None, difficulty=None,
         page = min(max(1, page), total_pages)
         rows = conn.execute(
             f"SELECT * FROM paper {where_sql}"
-            " ORDER BY create_time DESC, id DESC LIMIT ? OFFSET ?",
+            f" ORDER BY {sort_col} {sort_dir}, id {sort_dir} LIMIT ? OFFSET ?",
             params + [per_page, (page - 1) * per_page],
         ).fetchall()
         return rows, total, total_pages
@@ -391,7 +435,8 @@ def get_pending_paper_by_id(db_path, pending_id):
 
 
 def approve_pending_paper(db_path, pending_id, title, subject, year, difficulty,
-                          level, has_answer, source_url, source_school=None):
+                          level, has_answer, source_url, source_school=None,
+                          grade=""):
     """审核通过：元数据转正入库 paper 表，并删除待审核记录（同一事务）。
 
     返回新试卷的 id。调用前需在路由层完成字段校验。
@@ -399,10 +444,10 @@ def approve_pending_paper(db_path, pending_id, title, subject, year, difficulty,
     conn = get_db(db_path)
     try:
         cur = conn.execute(
-            "INSERT INTO paper (title, subject, year, difficulty, level,"
+            "INSERT INTO paper (title, subject, year, grade, difficulty, level,"
             " has_answer, source_url, source_school)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (title, subject, year, difficulty, level, has_answer,
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (title, subject, year, grade, difficulty, level, has_answer,
              source_url, source_school),
         )
         conn.execute("DELETE FROM pending_paper WHERE id = ?", (pending_id,))

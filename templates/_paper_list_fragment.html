@@ -1,0 +1,42 @@
+{# 题库列表片段：计数行 + 试卷列表 + 分页。
+   由 index.html 服务端 include 渲染，也由 /api/papers 单独渲染，
+   供首页 AJAX 无刷新替换 #paper-list 容器。 #}
+<div class="px-4 py-3 border-b border-gray-100 text-sm text-gray-500">
+  共 {{ total }} 条试卷{% if keyword %}（搜索“{{ keyword }}”）{% endif %}
+</div>
+{% if papers %}
+<ul class="divide-y divide-gray-100 px-4">
+  {% for paper in papers %}
+  <li class="py-3">
+    <a href="{{ url_for('paper_detail', paper_id=paper['id']) }}" class="text-sm font-medium text-gray-800 hover:text-blue-600">{{ paper['title'] }}</a>
+    <p class="text-xs text-gray-500 mt-1">
+      科目：{{ paper['subject'] }} · 年份：{{ paper['year'] }} · 难度：{{ difficulties[paper['difficulty']] }}{% if paper['grade'] %} · 年级：{{ paper['grade'] }}{% endif %} · 来源：{{ paper['source_school'] or '—' }}
+    </p>
+  </li>
+  {% endfor %}
+</ul>
+{% else %}
+<p class="px-4 py-10 text-center text-sm text-gray-400">
+  暂无符合条件的试卷{% if has_filters %}，<a href="{{ url_for('index') }}" class="text-blue-600 hover:underline">清除筛选</a>{% endif %}
+</p>
+{% endif %}
+{% if total_pages > 1 %}
+<div class="flex items-center justify-center gap-2 border-t border-gray-100 px-4 py-4">
+  {% if page > 1 %}
+  <a href="{{ url_for('index', page=page-1, **filter_args) }}"
+     class="px-3 py-1.5 border border-gray-300 rounded text-sm text-gray-600 hover:bg-gray-50">上一页</a>
+  {% endif %}
+  {% for p in range(1, total_pages + 1) %}
+    {% if p == page %}
+    <span class="px-3 py-1.5 rounded text-sm bg-blue-600 text-white">{{ p }}</span>
+    {% else %}
+    <a href="{{ url_for('index', page=p, **filter_args) }}"
+       class="px-3 py-1.5 border border-gray-300 rounded text-sm text-gray-600 hover:bg-gray-50">{{ p }}</a>
+    {% endif %}
+  {% endfor %}
+  {% if page < total_pages %}
+  <a href="{{ url_for('index', page=page+1, **filter_args) }}"
+     class="px-3 py-1.5 border border-gray-300 rounded text-sm text-gray-600 hover:bg-gray-50">下一页</a>
+  {% endif %}
+</div>
+{% endif %}

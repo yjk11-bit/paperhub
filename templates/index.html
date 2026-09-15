@@ -1,13 +1,15 @@
 {% extends "base.html" %}
 {% block title %}题库主页 - PaperHub{% endblock %}
 {% block content %}
-  <!-- 筛选表单（科目 + 难度，条件可叠加；标题关键词使用顶部搜索框，
-       hidden 字段保证筛选切换时保留已输入的关键词） -->
-  <form method="get" action="{{ url_for('index') }}" class="bg-white rounded-lg shadow p-4 flex flex-wrap items-end gap-3">
+  <!-- 筛选表单（学科/年级/年份/难度/学校，条件可叠加；标题关键词使用顶部搜索框，
+       hidden 字段保证筛选切换时保留已输入的关键词）。
+       JavaScript 拦截 submit 改为 AJAX 无刷新更新；未启用 JS 时退化为普通表单提交。 -->
+  <form method="get" action="{{ url_for('index') }}" id="filter-form"
+        class="bg-white rounded-lg shadow p-4 flex flex-wrap items-end gap-3">
     <input type="hidden" name="keyword" value="{{ keyword }}">
     <div>
-      <label class="block text-sm font-medium text-gray-700 mb-1">科目</label>
-      <select name="subject" class="border border-gray-300 rounded px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+      <label class="block text-sm font-medium text-gray-700 mb-1">学科</label>
+      <select name="subject" id="filter-subject" class="border border-gray-300 rounded px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
         <option value="">全部</option>
         {% for s in subjects %}
         <option value="{{ s }}" {% if s == subject %}selected{% endif %}>{{ s }}</option>
@@ -15,60 +17,140 @@
       </select>
     </div>
     <div>
+      <label class="block text-sm font-medium text-gray-700 mb-1">年级</label>
+      <select name="grade" id="filter-grade" class="border border-gray-300 rounded px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+        <option value="">全部</option>
+        {% for g in grades %}
+        <option value="{{ g }}" {% if g == grade %}selected{% endif %}>{{ g }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div>
+      <label class="block text-sm font-medium text-gray-700 mb-1">年份</label>
+      <select name="year" id="filter-year" class="border border-gray-300 rounded px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+        <option value="">全部</option>
+        {% for y in years %}
+        <option value="{{ y }}" {% if y|string == year %}selected{% endif %}>{{ y }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div>
       <label class="block text-sm font-medium text-gray-700 mb-1">难度</label>
-      <select name="difficulty" class="border border-gray-300 rounded px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+      <select name="difficulty" id="filter-difficulty" class="border border-gray-300 rounded px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
         <option value="">全部</option>
         {% for d, label in difficulties.items() %}
         <option value="{{ d }}" {% if d|string == difficulty %}selected{% endif %}>{{ label }}</option>
         {% endfor %}
       </select>
     </div>
-    <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white rounded px-4 py-2 text-sm">筛选</button>
-    <a href="{{ url_for('index') }}" class="text-gray-500 hover:text-gray-700 text-sm px-3 py-2">重置</a>
+    <div>
+      <label class="block text-sm font-medium text-gray-700 mb-1">学校</label>
+      <input type="text" name="school" id="filter-school" value="{{ school }}"
+             placeholder="如：衡水中学"
+             class="border border-gray-300 rounded px-3 py-2 text-sm w-40 focus:outline-none focus:ring-2 focus:ring-blue-500">
+    </div>
+    <div>
+      <label class="block text-sm font-medium text-gray-700 mb-1">排序</label>
+      <select name="sort" id="filter-sort" class="border border-gray-300 rounded px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+        {% for col, label in sort_columns.items() %}
+        <option value="{{ col }}" {% if col == sort %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="flex items-center gap-2">
+      <input type="hidden" name="order" id="order-input" value="{{ order }}">
+      <button type="button" id="order-toggle"
+              class="border border-gray-300 rounded px-3 py-2 text-sm text-gray-700 hover:bg-gray-50">
+        {{ '降序 ↓' if order == 'desc' else '升序 ↑' }}
+      </button>
+      <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white rounded px-4 py-2 text-sm">筛选</button>
+      <a href="{{ url_for('index') }}" class="text-gray-500 hover:text-gray-700 text-sm px-2 py-2">重置</a>
+    </div>
   </form>
 
-  <!-- 试卷列表 -->
-  <div class="bg-white rounded-lg shadow mt-4">
-    <div class="px-4 py-3 border-b border-gray-100 text-sm text-gray-500">
-      共 {{ total }} 条试卷{% if keyword %}（搜索“{{ keyword }}”）{% endif %}
-    </div>
-    {% if papers %}
-    <ul class="divide-y divide-gray-100 px-4">
-      {% for paper in papers %}
-      <li class="py-3">
-        <a href="{{ url_for('paper_detail', paper_id=paper['id']) }}" class="text-sm font-medium text-gray-800 hover:text-blue-600">{{ paper['title'] }}</a>
-        <p class="text-xs text-gray-500 mt-1">
-          科目：{{ paper['subject'] }} · 年份：{{ paper['year'] }} · 难度：{{ difficulties[paper['difficulty']] }} · 来源：{{ paper['source_school'] or '—' }}
-        </p>
-      </li>
-      {% endfor %}
-    </ul>
-    {% else %}
-    <p class="px-4 py-10 text-center text-sm text-gray-400">
-      暂无符合条件的试卷{% if keyword or subject or difficulty %}，<a href="{{ url_for('index') }}" class="text-blue-600 hover:underline">清除筛选</a>{% endif %}
-    </p>
-    {% endif %}
+  <!-- 试卷列表容器：服务端首屏 include 渲染，AJAX 时整体替换 innerHTML -->
+  <div id="paper-list" class="bg-white rounded-lg shadow mt-4">
+    {% include "_paper_list_fragment.html" %}
   </div>
+{% endblock %}
 
-  <!-- 分页（保留当前筛选参数） -->
-  {% if total_pages > 1 %}
-  <div class="flex items-center justify-center gap-2 mt-6">
-    {% if page > 1 %}
-    <a href="{{ url_for('index', page=page-1, keyword=keyword, subject=subject, difficulty=difficulty) }}"
-       class="px-3 py-1.5 border border-gray-300 rounded text-sm text-gray-600 hover:bg-gray-50">上一页</a>
-    {% endif %}
-    {% for p in range(1, total_pages + 1) %}
-      {% if p == page %}
-      <span class="px-3 py-1.5 rounded text-sm bg-blue-600 text-white">{{ p }}</span>
-      {% else %}
-      <a href="{{ url_for('index', page=p, keyword=keyword, subject=subject, difficulty=difficulty) }}"
-         class="px-3 py-1.5 border border-gray-300 rounded text-sm text-gray-600 hover:bg-gray-50">{{ p }}</a>
-      {% endif %}
-    {% endfor %}
-    {% if page < total_pages %}
-    <a href="{{ url_for('index', page=page+1, keyword=keyword, subject=subject, difficulty=difficulty) }}"
-       class="px-3 py-1.5 border border-gray-300 rounded text-sm text-gray-600 hover:bg-gray-50">下一页</a>
-    {% endif %}
-  </div>
-  {% endif %}
+{% block scripts %}
+<script>
+(function () {
+  var form = document.getElementById('filter-form');
+  var container = document.getElementById('paper-list');
+  var orderInput = document.getElementById('order-input');
+  var orderToggle = document.getElementById('order-toggle');
+  var schoolTimer = null;
+
+  function syncOrderToggle() {
+    if (orderToggle && orderInput) {
+      orderToggle.textContent = orderInput.value === 'desc' ? '降序 ↓' : '升序 ↑';
+    }
+  }
+
+  // AJAX 加载：把筛选/分页参数发给 /api/papers，替换列表容器，并把参数同步到地址栏
+  function loadResults(queryString) {
+    container.classList.add('opacity-50');
+    fetch('/api/papers' + queryString)
+      .then(function (resp) { return resp.json(); })
+      .then(function (data) {
+        container.innerHTML = data.html;
+        if (window.history && history.replaceState) {
+          history.replaceState(null, '', window.location.pathname + queryString);
+        }
+      })
+      .catch(function () { window.location.reload(); })
+      .finally(function () { container.classList.remove('opacity-50'); });
+  }
+
+  function submitFilter() {
+    loadResults('?' + new URLSearchParams(new FormData(form)).toString());
+  }
+
+  if (form) {
+    form.addEventListener('submit', function (e) {
+      e.preventDefault();
+      submitFilter();
+    });
+  }
+
+  // 下拉与排序字段变化即刷新（无需点"筛选"按钮）
+  ['subject', 'grade', 'year', 'difficulty', 'sort'].forEach(function (name) {
+    var el = document.getElementById('filter-' + name);
+    if (el) el.addEventListener('change', submitFilter);
+  });
+
+  // 学校名称输入防抖：停止输入 300ms 后自动刷新
+  var schoolEl = document.getElementById('filter-school');
+  if (schoolEl) {
+    schoolEl.addEventListener('input', function () {
+      clearTimeout(schoolTimer);
+      schoolTimer = setTimeout(submitFilter, 300);
+    });
+  }
+
+  // 升序/降序切换
+  if (orderToggle && orderInput) {
+    orderToggle.addEventListener('click', function () {
+      orderInput.value = orderInput.value === 'desc' ? 'asc' : 'desc';
+      syncOrderToggle();
+      submitFilter();
+    });
+  }
+
+  // 分页与"清除筛选"链接：拦截为 AJAX 加载（链接生成自服务端，参数完整）
+  document.addEventListener('click', function (e) {
+    var link = e.target.closest('#paper-list a[href]');
+    if (!link) return;
+    var url = new URL(link.href, window.location.origin);
+    if (url.pathname !== '/') return;
+    e.preventDefault();
+    loadResults(url.search || '?');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  });
+
+  syncOrderToggle();
+})();
+</script>
 {% endblock %}

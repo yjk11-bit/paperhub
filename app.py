@@ -4,7 +4,9 @@
 """
 from functools import wraps
 
-from flask import Flask, abort, redirect, render_template, request, session, url_for
+from flask import (
+    Flask, abort, jsonify, redirect, render_template, request, session, url_for,
+)
 
 import config
 import models
@@ -37,11 +39,16 @@ def crawl_command():
 
 
 def login_required(view):
-    """登录保护装饰器：未登录访问受限页面时重定向到登录页。"""
+    """登录保护装饰器：未登录访问受限页面时重定向到登录页；
+    会话中的用户已被删除时清除会话回登录页（避免外键错误 500）。"""
 
     @wraps(view)
     def wrapped(*args, **kwargs):
         if "user_id" not in session:
+            return redirect(url_for("login"))
+        if models.get_user_by_id(app.config["DATABASE"], session["user_id"]) is None:
+            # 会话指向的用户已被删除：清除会话，回到登录页
+            session.clear()
             return redirect(url_for("login"))
         return view(*args, **kwargs)
 
@@ -77,26 +84,65 @@ def inject_is_admin():
     return {"is_admin": is_admin}
 
 
+def _parse_page(default=1):
+    """解析分页页码，非法输入回落默认值。"""
+    try:
+        return int(request.args.get("page", default))
+    except ValueError:
+        return default
+
+
+def _paper_filters():
+    """解析题库列表页的筛选/排序参数（主页与 AJAX 接口共用）。
+
+    返回 (filter_args, sort, order)：
+    - filter_args：全部非空筛选条件的 dict（值均为字符串），
+      原样传给模型层参数化查询，同时用于模板拼接分页链接；
+    - sort/order：经白名单收敛（非法值回落默认"上传时间倒序"）。
+    """
+    raw = {
+        "keyword": request.args.get("keyword", "").strip(),
+        "subject": request.args.get("subject", "").strip(),
+        "difficulty": request.args.get("difficulty", "").strip(),
+        "grade": request.args.get("grade", "").strip(),
+        "year": request.args.get("year", "").strip(),
+        "school": request.args.get("school", "").strip(),
+    }
+    sort = request.args.get("sort", "").strip()
+    if sort not in models.PAPER_SORT_COLUMNS:
+        sort = "create_time"
+    order = request.args.get("order", "").strip()
+    if order not in ("asc", "desc"):
+        order = "desc"
+    return {k: v for k, v in raw.items() if v}, sort, order
+
+
+# 年份下拉选项：当前年份往前推（2020 至 2026）
+YEARS = list(range(2026, 2019, -1))
+
+
 @app.route("/")
 @login_required
 def index():
-    """题库主页（需登录）：分页展示 + 检索筛选（标题关键词、科目、难度，可叠加）。"""
-    keyword = request.args.get("keyword", "").strip()
-    subject = request.args.get("subject", "").strip()
-    difficulty = request.args.get("difficulty", "").strip()
-    try:
-        page = int(request.args.get("page", 1))
-    except ValueError:
-        page = 1
-
+    """题库主页（需登录）：分页展示 + 多维检索筛选（标题关键词、科目、年级、
+    年份、难度、来源学校，条件可叠加）+ 排序，前端 AJAX 无刷新更新列表。"""
+    filter_args, sort, order = _paper_filters()
+    page = _parse_page()
     papers, total, total_pages = models.query_papers(
         app.config["DATABASE"],
-        keyword=keyword,
-        subject=subject,
-        difficulty=difficulty,
+        keyword=filter_args.get("keyword"),
+        subject=filter_args.get("subject"),
+        difficulty=filter_args.get("difficulty"),
+        grade=filter_args.get("grade"),
+        year=filter_args.get("year"),
+        school=filter_args.get("school"),
         page=page,
         per_page=10,
+        sort=sort,
+        order=order,
     )
+    # 页码越界收敛（查询内部已收敛，这里同步用于分页高亮与回显）
+    page = min(page, total_pages)
     return render_template(
         "index.html",
         username=session.get("username"),
@@ -104,12 +150,55 @@ def index():
         page=page,
         total=total,
         total_pages=total_pages,
-        keyword=keyword,
-        subject=subject,
-        difficulty=difficulty,
+        filter_args=filter_args,
+        sort=sort,
+        order=order,
         subjects=models.SUBJECTS,
         difficulties=models.DIFFICULTIES,
+        grades=models.GRADES,
+        years=YEARS,
+        sort_columns=models.PAPER_SORT_COLUMNS,
+        **filter_args,
     )
+
+
+@app.route("/api/papers")
+def api_papers():
+    """试卷列表 AJAX 接口（需登录）：接收与主页相同的筛选/排序/分页参数，
+    返回列表 HTML 片段（JSON 包装），供首页无刷新更新。
+
+    所有筛选值均经参数化 SQL 与白名单校验（见 models.query_papers）。
+    """
+    if "user_id" not in session:
+        return jsonify(error="请先登录"), 401
+    filter_args, sort, order = _paper_filters()
+    page = _parse_page()
+    papers, total, total_pages = models.query_papers(
+        app.config["DATABASE"],
+        keyword=filter_args.get("keyword"),
+        subject=filter_args.get("subject"),
+        difficulty=filter_args.get("difficulty"),
+        grade=filter_args.get("grade"),
+        year=filter_args.get("year"),
+        school=filter_args.get("school"),
+        page=page,
+        per_page=10,
+        sort=sort,
+        order=order,
+    )
+    page = min(page, total_pages)
+    html = render_template(
+        "_paper_list_fragment.html",
+        papers=papers,
+        page=page,
+        total=total,
+        total_pages=total_pages,
+        filter_args=filter_args,
+        difficulties=models.DIFFICULTIES,
+        has_filters=bool(filter_args),
+        **filter_args,
+    )
+    return jsonify(html=html, total=total, page=page, total_pages=total_pages)
 
 
 @app.route("/paper/<int:paper_id>")
@@ -247,6 +336,7 @@ def admin_pending():
         subjects=models.SUBJECTS,
         difficulties=models.DIFFICULTIES,
         levels=models.LEVELS,
+        grades=models.GRADES,
     )
 
 
@@ -263,6 +353,7 @@ def approve_pending(pending_id):
 
     title = request.form.get("title", "").strip()
     subject = request.form.get("subject", "").strip()
+    grade = request.form.get("grade", "").strip()
     level = request.form.get("level", "").strip()
     source_url = request.form.get("source_url", "").strip()
     try:
@@ -278,6 +369,9 @@ def approve_pending(pending_id):
         error = "年份需在 2000 至 2100 之间"
     elif subject not in models.SUBJECTS:
         error = "学科无效，请从列表中选择"
+    elif grade and grade not in models.GRADES:
+        # 年级允许留空（未标注，不参与年级筛选），非空值必须在枚举内
+        error = "年级无效，请从列表中选择"
     elif difficulty not in models.DIFFICULTIES:
         error = "难度无效，请从列表中选择"
     elif level not in models.LEVELS:
@@ -285,7 +379,7 @@ def approve_pending(pending_id):
     else:
         models.approve_pending_paper(
             app.config["DATABASE"], pending_id, title, subject, year, difficulty,
-            level, has_answer, source_url, pending["source_school"],
+            level, has_answer, source_url, pending["source_school"], grade=grade,
         )
         return redirect(url_for("admin_pending", page=request.args.get("page", 1)))
 
@@ -306,6 +400,7 @@ def approve_pending(pending_id):
         subjects=models.SUBJECTS,
         difficulties=models.DIFFICULTIES,
         levels=models.LEVELS,
+        grades=models.GRADES,
         error=error,
     )
 

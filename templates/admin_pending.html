@@ -49,6 +49,15 @@
                  class="w-full border border-gray-300 rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
         </div>
         <div>
+          <label class="block text-xs font-medium text-gray-600 mb-1">年级</label>
+          <select name="grade" class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm bg-white">
+            <option value="">未标注</option>
+            {% for g in grades %}
+            <option value="{{ g }}">{{ g }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div>
           <label class="block text-xs font-medium text-gray-600 mb-1">难度</label>
           <select name="difficulty" class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm bg-white">
             {% for d, label in difficulties.items() %}

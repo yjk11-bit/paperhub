@@ -20,3 +20,4 @@ instance/
 
 # Claude Code 本机专属配置
 .claude/settings.local.json
+.claude/settings.json

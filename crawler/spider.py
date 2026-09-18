@@ -6,7 +6,7 @@
 
 版权约束（必须严格遵守，违反即侵权）：
 - ❌ 禁止下载、保存 PDF 二进制文件，禁止任何形式的 PDF 托管
-- ✅ 只采集试卷元信息：标题、学科、年份、来源地区、原始网页链接
+- ✅ 只采集试卷元信息：标题、学科、年份、来源地区、原始网页链接、网页摘要
 - ✅ 抓取结果写入 pending_paper 待审核表，经管理员人工审核后才入库上线
 - 抓取限速：每两次请求之间至少间隔 CRAWL_DELAY_SECONDS 秒
 - 遵守 robots 协议：抓取前检查 robots.txt，目标路径被禁止则中止
@@ -122,12 +122,22 @@ def parse_papers(html, base_url=BASE_URL):
             (s for kw, s in _SUBJECT_KEYWORDS.items() if kw in title), None
         )
         province = _PROVINCE_RE.search(title)
+        # 网页摘要：链接父节点里标题之外的说明性文字（如"含答案解析"），
+        # 存入 page_summary 供 AI 预审参考；父节点是整页容器（文字 >800 字）
+        # 或没有多余文字时为空串。
+        summary = ""
+        parent = a.parent
+        if parent is not None and parent.name not in ("body", "html"):
+            parent_text = parent.get_text(" ", strip=True)
+            if len(parent_text) <= 800:
+                summary = parent_text.replace(title, "", 1).strip()[:500]
         papers.append({
             "title": title,
             "subject": subject,
             "year": int(year_match.group(1)) if year_match else None,
             "source_url": href,
             "source_school": province.group(1) if province else None,
+            "page_summary": summary,
         })
     return papers
 
@@ -175,6 +185,7 @@ def crawl(db_path, list_paths=None):
                     item["year"],
                     item["source_url"],
                     item["source_school"],
+                    page_summary=item["page_summary"],
                 )
                 added += 1
     return added

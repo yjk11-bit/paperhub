@@ -8,6 +8,7 @@ from flask import (
     Flask, abort, jsonify, redirect, render_template, request, session, url_for,
 )
 
+import ai_review
 import config
 import models
 from crawler import spider as crawler
@@ -412,6 +413,33 @@ def reject_pending(pending_id):
     if not models.delete_pending_paper(app.config["DATABASE"], pending_id):
         abort(404)
     return redirect(url_for("admin_pending", page=request.args.get("page", 1)))
+
+
+@app.route("/admin/pending/<int:pending_id>/ai_suggest", methods=["POST"])
+@admin_required
+def ai_suggest(pending_id):
+    """AI 预审接口（仅管理员）：读取待审核记录的标题与网页摘要，调用 DeepSeek
+    提取结构化字段，返回 JSON 供前端预填审核表单。
+
+    仅辅助预填、不自动入库：管理员人工复核后仍需手动点「通过入库」。
+    API 未配置/调用失败时返回 ok=False 与友好提示，页面不崩溃。
+    """
+    pending = models.get_pending_paper_by_id(app.config["DATABASE"], pending_id)
+    if pending is None:
+        abort(404)
+    api_key = (app.config.get("DEEPSEEK_API_KEY") or "").strip()
+    if not api_key:
+        return jsonify(
+            ok=False,
+            error="未配置 DeepSeek API Key，请先在 local_config.py 中填写后重启服务",
+        )
+    try:
+        result = ai_review.suggest_paper_fields(
+            pending["title"] or "", pending["page_summary"] or "", api_key
+        )
+    except ai_review.AIReviewError:
+        return jsonify(ok=False, error="AI预审失败，请手动填写")
+    return jsonify(ok=True, **result)
 
 
 @app.route("/register", methods=["GET", "POST"])

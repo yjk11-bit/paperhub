@@ -22,11 +22,18 @@
           </p>
           <a href="{{ p['source_url'] }}" target="_blank" rel="noopener noreferrer" class="text-xs text-blue-600 hover:underline">查看源站网页</a>
         </div>
-        <form method="post" action="{{ url_for('reject_pending', pending_id=p['id'], page=page) }}"
-              onsubmit="return confirm('确定驳回并删除这条待审核记录吗？');">
-          <button type="submit" class="text-xs text-red-500 hover:text-red-600 shrink-0">驳回</button>
-        </form>
+        <div class="flex items-center gap-3 shrink-0">
+          <button type="button" data-ai-url="{{ url_for('ai_suggest', pending_id=p['id']) }}"
+                  class="text-xs text-violet-600 border border-violet-300 rounded px-2 py-1 hover:bg-violet-50">
+            🤖 AI预审
+          </button>
+          <form method="post" action="{{ url_for('reject_pending', pending_id=p['id'], page=page) }}"
+                onsubmit="return confirm('确定驳回并删除这条待审核记录吗？');">
+            <button type="submit" class="text-xs text-red-500 hover:text-red-600">驳回</button>
+          </form>
+        </div>
       </div>
+      <div class="ai-msg text-xs mt-1"></div>
 
       <form method="post" action="{{ url_for('approve_pending', pending_id=p['id'], page=page) }}"
             class="mt-4 border-t border-gray-100 pt-4 grid grid-cols-2 md:grid-cols-4 gap-3 items-end">
@@ -114,4 +121,47 @@
   {% else %}
   <div class="bg-white rounded-lg shadow px-4 py-10 text-center text-sm text-gray-400">暂无待审核试卷</div>
   {% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+// AI 预审：调用后端接口，把大模型提取的字段预填到审核表单。
+// 仅预填、不自动入库：管理员人工复核后仍需手动点「通过入库」。
+document.addEventListener('DOMContentLoaded', function () {
+  document.querySelectorAll('[data-ai-url]').forEach(function (btn) {
+    btn.addEventListener('click', async function () {
+      const card = btn.closest('.bg-white');
+      const form = card.querySelector('form[action*="approve"]');
+      const msg = card.querySelector('.ai-msg');
+      const original = btn.textContent;
+      const showMsg = function (text, color) {
+        msg.textContent = text;
+        msg.className = 'ai-msg text-xs mt-1 ' + color;
+      };
+      btn.disabled = true;
+      btn.textContent = 'AI预审中…';
+      showMsg('正在调用大模型，请稍候…', 'text-gray-500');
+      try {
+        const resp = await fetch(btn.dataset.aiUrl, { method: 'POST' });
+        if (!resp.ok) { showMsg('AI预审失败，请手动填写', 'text-red-500'); return; }
+        const data = await resp.json();
+        if (!data.ok) { showMsg(data.error || 'AI预审失败，请手动填写', 'text-red-500'); return; }
+        // 预填表单字段（后端已做枚举收敛，空值字段保持原状/未标注）
+        if (data.subject) form.querySelector('[name="subject"]').value = data.subject;
+        form.querySelector('[name="grade"]').value = data.grade || '';
+        form.querySelector('[name="year"]').value = data.exam_year ?? '';
+        if (data.difficulty) form.querySelector('[name="difficulty"]').value = data.difficulty;
+        if (data.level_type) form.querySelector('[name="level"]').value = data.level_type;
+        form.querySelector('[name="has_answer"]').checked = !!data.has_analysis;
+        showMsg('AI预审完成，请人工复核后再点「通过入库」', 'text-green-600');
+      } catch (e) {
+        showMsg('AI预审失败，请手动填写', 'text-red-500');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = original;
+      }
+    });
+  });
+});
+</script>
 {% endblock %}

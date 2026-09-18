@@ -59,6 +59,7 @@ CREATE TABLE IF NOT EXISTS pending_paper (
     year          INTEGER,                                -- 抓取年份
     source_url    TEXT,                                   -- 原始网页链接
     source_school TEXT,                                   -- 来源
+    page_summary  TEXT NOT NULL DEFAULT '',               -- 网页原文摘要（AI 预审参考）
     crawl_time    DATETIME                                -- 抓取时间
 );
 """
@@ -104,6 +105,14 @@ def init_db(db_path):
                 " WHEN title LIKE '%高三%' OR title LIKE '%高考%' THEN '高三'"
                 " ELSE grade END"
                 " WHERE grade = ''"
+            )
+        # 旧库迁移：pending_paper 表补充 page_summary 列（网页原文摘要，
+        # 供 AI 预审读取；旧记录为空，AI 预审时仅依据标题推断）。
+        pending_cols = [row[1] for row in conn.execute("PRAGMA table_info(pending_paper)")]
+        if "page_summary" not in pending_cols:
+            conn.execute(
+                "ALTER TABLE pending_paper"
+                " ADD COLUMN page_summary TEXT NOT NULL DEFAULT ''"
             )
         conn.commit()
     finally:
@@ -388,14 +397,19 @@ def clear_view_history(db_path, user_id):
         conn.close()
 
 
-def add_pending_paper(db_path, title, subject, year, source_url, source_school=None):
-    """写入一条爬虫采集的待审核元数据（管理员审核通过前不上线）。返回记录 id。"""
+def add_pending_paper(db_path, title, subject, year, source_url,
+                      source_school=None, page_summary=""):
+    """写入一条爬虫采集的待审核元数据（管理员审核通过前不上线）。返回记录 id。
+
+    page_summary 为爬虫抓到的网页原文摘要，供 AI 预审参考（可为空）。
+    """
     conn = get_db(db_path)
     try:
         cur = conn.execute(
             "INSERT INTO pending_paper (title, subject, year, source_url,"
-            " source_school, crawl_time) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)",
-            (title, subject, year, source_url, source_school),
+            " source_school, page_summary, crawl_time)"
+            " VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)",
+            (title, subject, year, source_url, source_school, page_summary),
         )
         conn.commit()
         return cur.lastrowid

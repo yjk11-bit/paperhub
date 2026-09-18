@@ -29,8 +29,9 @@ PaperHub 核心思路：
 | 我的收藏 | 分页展示本人收藏的试卷 |
 | 浏览历史 | 打开详情页自动记录（同卷去重只留最新）、单条删除、一键清空、分页 |
 | 个人中心 | 用户名、注册时间、收藏与浏览历史入口 |
-| 元数据爬虫 | requests + BeautifulSoup 采集标题/学科/年份/来源链接，robots 逐路径检查、限速、按 source_url 去重 |
+| 元数据爬虫 | requests + BeautifulSoup 采集标题/学科/年份/来源链接/网页摘要，robots 逐路径检查、限速、按 source_url 去重 |
 | 管理员审核面板 | 分页查看待审核元数据、审核通过入库（同一事务）、驳回删除；普通用户 403 且无入口 |
+| AI 预审（审核辅助） | DeepSeek 大模型读取待审核记录的标题+网页摘要，自动提取学科/年级/年份/难度/等级/是否带解析并预填审核表单；**仅预填不自动入库**，人工复核后手动入库；调用失败/超时友好提示不崩溃 |
 
 ## 🛠️ 技术栈
 
@@ -38,6 +39,7 @@ PaperHub 核心思路：
 - Web 框架：Flask（Jinja2 模板）
 - 数据库：SQLite（后期可迁移 MySQL）
 - 爬虫：requests + BeautifulSoup（仅采集元数据）
+- AI 预审：DeepSeek API（deepseek-chat），仅辅助提取字段，人工复核后入库
 - 密码：werkzeug.security 哈希存储
 
 ### 前端
@@ -65,6 +67,11 @@ python -m venv .venv
 
 # 5. 设置管理员（在数据库中手动提权）
 sqlite3 instance\paperhub.db "UPDATE user SET is_admin=1 WHERE username='你的用户名';"
+
+# 6.（可选）配置 AI 预审：复制 local_config.example.py 为 local_config.py，
+#    填入 DeepSeek API Key（https://platform.deepseek.com 创建），重启服务后
+#    审核面板每条待审核记录旁即可点【AI预审】。该文件已被 .gitignore 忽略，
+#    绝不会提交到 git；未配置时接口返回友好提示，不影响其他功能。
 ```
 
 > 数据库文件位于 `instance/paperhub.db`（已加入 .gitignore，不提交到 git）。
@@ -85,6 +92,7 @@ sqlite3 instance\paperhub.db "UPDATE user SET is_admin=1 WHERE username='你的�
 | `/admin/pending` | GET | 管理员 | 待审核面板（分页） |
 | `/admin/pending/<id>/approve` | POST | 管理员 | 审核通过入库（校验年份 2000–2100 等字段） |
 | `/admin/pending/<id>/reject` | POST | 管理员 | 驳回删除 |
+| `/admin/pending/<id>/ai_suggest` | POST | 管理员 | AI 预审：调用 DeepSeek 提取结构化字段返回 JSON，前端预填表单（仅预填不自动入库） |
 
 ## 🗃️ 数据库设计（SQLite，共 5 张表）
 
@@ -94,7 +102,7 @@ sqlite3 instance\paperhub.db "UPDATE user SET is_admin=1 WHERE username='你的�
 | `user` | 用户：用户名、密码哈希、注册时间、is_admin 管理员标记 |
 | `collect` | 收藏：user_id + paper_id 多对多，收藏时间 |
 | `view_history` | 浏览历史：user_id + paper_id，浏览时间（同卷去重只留最新） |
-| `pending_paper` | 爬虫待审核：标题、学科、年份、来源链接、来源、抓取时间；存在即待审核，通过转正、驳回删除 |
+| `pending_paper` | 爬虫待审核：标题、学科、年份、来源链接、来源、网页摘要、抓取时间；存在即待审核，通过转正、驳回删除 |
 
 > 约束：不保存 PDF 本地路径；`source_url` 只保存外部网页地址。爬虫采集的原始数据必须经管理员人工审核才会上线。
 
@@ -104,7 +112,9 @@ sqlite3 instance\paperhub.db "UPDATE user SET is_admin=1 WHERE username='你的�
 vibecoding/
 ├── app.py               # Flask 应用入口：路由、登录/管理员装饰器、init-db / crawl CLI 命令
 ├── models.py            # 数据模型：建表、迁移、全部增删改查函数
-├── config.py            # 应用配置（SECRET_KEY、数据库路径）
+├── ai_review.py         # AI 预审模块：DeepSeek 调用、严格 JSON 解析、字段枚举收敛
+├── config.py            # 应用配置（SECRET_KEY、数据库路径、DeepSeek Key）
+├── local_config.example.py # 本地配置模板（复制为 local_config.py 填 DeepSeek Key，git 忽略）
 ├── crawler/
 │   └── spider.py        # 元数据爬虫：robots 检查、限速、PDF 下载拒绝、解析、去重
 ├── templates/
@@ -134,6 +144,7 @@ vibecoding/
 ## 📌 已知取舍与后续规划
 
 - **驳回 = 删除**：被驳回的待审核记录若仍在源站列表页，下次爬取会重新进入待审核；如需“永久拒绝记忆”需新增字段（当前版本按方案设计执行删除语义）。
+- **AI 预审仅预填、绝不自动入库**：大模型提取结果必须经管理员人工复核后手动点「通过入库」；字段经枚举白名单收敛，信息不足时填空值不编造；未配置 DeepSeek Key 或调用失败时接口返回友好提示，不影响审核流程。
 - 爬虫学科/年份识别基于标题关键词与正则，匹配不到时字段为 `未识别`，由管理员审核时人工补全。
 - 列表页表格中的下载按钮链接（文字为“试题/答案/作文”等通用标签，且指向的详情页可能已失效）会被爬虫直接跳过，不进入待审核。
 - 后续规划：试卷上下架、标签编辑、管理员手动录入、CSRF 防护、生产环境部署（PythonAnywhere / Vercel）。

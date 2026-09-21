@@ -5,12 +5,14 @@
 from functools import wraps
 
 from flask import (
-    Flask, abort, jsonify, redirect, render_template, request, session, url_for,
+    Flask, Response, abort, jsonify, redirect, render_template, request,
+    session, url_for,
 )
 
 import ai_review
 import config
 import models
+import paper_import
 from crawler import spider as crawler
 
 app = Flask(__name__)
@@ -440,6 +442,112 @@ def ai_suggest(pending_id):
     except ai_review.AIReviewError:
         return jsonify(ok=False, error="AI预审失败，请手动填写")
     return jsonify(ok=True, **result)
+
+
+@app.route("/admin/pending/csv_template")
+@admin_required
+def csv_template():
+    """CSV 导入模板下载（仅管理员）。"""
+    return Response(
+        paper_import.render_template_csv(),
+        mimetype="text/csv",
+        headers={
+            "Content-Disposition":
+                "attachment; filename=paperhub_import_template.csv",
+        },
+    )
+
+
+@app.route("/admin/pending/csv_import", methods=["POST"])
+@admin_required
+def csv_import():
+    """CSV 批量导入（仅管理员）：解析上传文件，逐行校验。
+
+    合法行写入待审核表（不自动入库），错误行返回"行号 + 原因"汇总；
+    部分成功策略：合法行全部入库。解析失败/编码无法识别时返回友好提示。
+    """
+    file = request.files.get("file")
+    if file is None or not file.filename:
+        return jsonify(ok=False, error="请选择要上传的 CSV 文件")
+    data = file.read()
+    if not data:
+        return jsonify(ok=False, error="CSV 文件为空")
+    text = None
+    for enc in ("utf-8-sig", "gbk"):
+        try:
+            text = data.decode(enc)
+            break
+        except UnicodeDecodeError:
+            continue
+    if text is None:
+        return jsonify(ok=False, error="CSV 编码无法识别（请使用 UTF-8 或 GBK 编码）")
+    try:
+        rows, errors = paper_import.parse_csv_content(text)
+    except ValueError as exc:
+        return jsonify(ok=False, error=str(exc))
+
+    db = app.config["DATABASE"]
+    imported = 0
+    for line_no, fields in rows:
+        if models.source_url_exists(db, fields["source_url"]):
+            errors.append({
+                "row": line_no,
+                "reason": "来源链接已存在（待审核或已入库）",
+            })
+            continue
+        models.add_pending_paper(
+            db,
+            fields["title"],
+            fields["subject"],
+            fields["year"],
+            fields["source_url"],
+            fields["source_school"] or None,
+            grade=fields["grade"],
+            difficulty=fields["difficulty"],
+            level=fields["level"],
+            has_answer=1 if fields["has_answer"] else 0,
+        )
+        imported += 1
+    errors.sort(key=lambda e: e["row"])
+    return jsonify(ok=True, imported=imported, total=len(rows), errors=errors)
+
+
+@app.route("/admin/pending/manual_add", methods=["POST"])
+@admin_required
+def manual_add():
+    """管理员手动录入（仅管理员）：校验字段后写入待审核表，不自动入库。
+
+    入参支持表单（multipart/form-data）或 JSON，字段名：
+    title/subject/grade/year/difficulty/level/has_answer/
+    source_url/source_school。
+    """
+    data = request.get_json(silent=True)
+    if not data:
+        data = request.form.to_dict()
+    fields, error = paper_import.validate_paper_fields(data)
+    if error:
+        return jsonify(ok=False, error=error)
+    if models.source_url_exists(app.config["DATABASE"], fields["source_url"]):
+        return jsonify(ok=False, error="来源链接已存在（待审核或已入库）")
+    new_id = models.add_pending_paper(
+        app.config["DATABASE"],
+        fields["title"],
+        fields["subject"],
+        fields["year"],
+        fields["source_url"],
+        fields["source_school"] or None,
+        grade=fields["grade"],
+        difficulty=fields["difficulty"],
+        level=fields["level"],
+        has_answer=1 if fields["has_answer"] else 0,
+    )
+    return jsonify(ok=True, id=new_id)
+
+
+@app.errorhandler(413)
+def upload_too_large(error):
+    """上传文件超过 MAX_CONTENT_LENGTH 时的友好提示。"""
+    return jsonify(ok=False, error="上传文件过大（最大 2MB）"), 413
 
 
 @app.route("/register", methods=["GET", "POST"])

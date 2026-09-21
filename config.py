@@ -19,3 +19,5 @@ class Config:
     DATABASE = os.path.join(BASE_DIR, "instance", "paperhub.db")
     # DeepSeek API Key（未配置时 AI 预审接口返回友好提示，不影响其他功能）
     DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", _LOCAL_DEEPSEEK_API_KEY)
+    # 上传文件大小上限（CSV 导入），超出返回 413 友好提示
+    MAX_CONTENT_LENGTH = 2 * 1024 * 1024

@@ -1,9 +1,13 @@
 {% extends "base.html" %}
 {% block title %}待审核试卷 - 管理后台 - PaperHub{% endblock %}
 {% block content %}
-  <div class="flex items-center justify-between mb-4">
-    <h2 class="text-lg font-bold text-gray-800">待审核试卷（爬虫采集元数据）</h2>
-    <span class="text-sm text-gray-500">共 {{ total }} 条待审核记录</span>
+  <div class="flex items-center justify-between mb-4 flex-wrap gap-2">
+    <h2 class="text-lg font-bold text-gray-800">待审核试卷（爬虫采集 / CSV 导入 / 手动录入）</h2>
+    <div class="flex items-center gap-2">
+      <span class="text-sm text-gray-500 mr-1">共 {{ total }} 条待审核记录</span>
+      <button type="button" id="btn-import-csv" class="text-sm bg-blue-600 hover:bg-blue-700 text-white rounded px-3 py-1.5">📥 导入CSV</button>
+      <button type="button" id="btn-manual-add" class="text-sm bg-emerald-600 hover:bg-emerald-700 text-white rounded px-3 py-1.5">✍️ 手动录入</button>
+    </div>
   </div>
 
   {% if error %}
@@ -19,6 +23,10 @@
           <h3 class="text-sm font-semibold text-gray-800">{{ p['title'] }}</h3>
           <p class="text-xs text-gray-500 mt-1">
             科目：{{ p['subject'] or '未识别' }} · 年份：{{ p['year'] or '未识别' }} · 来源：{{ p['source_school'] or '—' }} · 抓取于 {{ p['crawl_time'] }}
+            {% if p['grade'] %} · 年级：{{ p['grade'] }}{% endif %}
+            {% if p['difficulty'] %} · 难度：{{ difficulties[p['difficulty']] }}{% endif %}
+            {% if p['level'] %} · 等级：{{ p['level'] }}{% endif %}
+            {% if p['has_answer'] %} · 带解析{% endif %}
           </p>
           <a href="{{ p['source_url'] }}" target="_blank" rel="noopener noreferrer" class="text-xs text-blue-600 hover:underline">查看源站网页</a>
         </div>
@@ -60,7 +68,7 @@
           <select name="grade" class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm bg-white">
             <option value="">未标注</option>
             {% for g in grades %}
-            <option value="{{ g }}">{{ g }}</option>
+            <option value="{{ g }}" {% if p['grade'] == g %}selected{% endif %}>{{ g }}</option>
             {% endfor %}
           </select>
         </div>
@@ -68,7 +76,7 @@
           <label class="block text-xs font-medium text-gray-600 mb-1">难度</label>
           <select name="difficulty" class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm bg-white">
             {% for d, label in difficulties.items() %}
-            <option value="{{ d }}" {% if d == 2 %}selected{% endif %}>{{ label }}</option>
+            <option value="{{ d }}" {% if (p['difficulty'] or 2) == d %}selected{% endif %}>{{ label }}</option>
             {% endfor %}
           </select>
         </div>
@@ -76,12 +84,12 @@
           <label class="block text-xs font-medium text-gray-600 mb-1">试卷等级</label>
           <select name="level" class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm bg-white">
             {% for l in levels %}
-            <option value="{{ l }}" {% if l == '名校联考' %}selected{% endif %}>{{ l }}</option>
+            <option value="{{ l }}" {% if (p['level'] or '名校联考') == l %}selected{% endif %}>{{ l }}</option>
             {% endfor %}
           </select>
         </div>
         <div class="flex items-center gap-2 pb-1.5">
-          <input type="checkbox" name="has_answer" value="1" id="has_answer_{{ p['id'] }}" class="rounded">
+          <input type="checkbox" name="has_answer" value="1" id="has_answer_{{ p['id'] }}" class="rounded" {% if p['has_answer'] %}checked{% endif %}>
           <label for="has_answer_{{ p['id'] }}" class="text-xs font-medium text-gray-600">带解析</label>
         </div>
         <div class="col-span-2 md:col-span-3">
@@ -121,6 +129,108 @@
   {% else %}
   <div class="bg-white rounded-lg shadow px-4 py-10 text-center text-sm text-gray-400">暂无待审核试卷</div>
   {% endif %}
+
+  <!-- CSV 导入弹窗 -->
+  <div id="csv-modal" class="fixed inset-0 bg-black/40 z-50 hidden items-center justify-center p-4">
+    <div class="bg-white rounded-lg shadow-xl w-full max-w-2xl max-h-[85vh] overflow-y-auto p-5">
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="font-bold text-gray-800">📥 导入 CSV</h3>
+        <button type="button" data-close class="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
+      </div>
+      <p class="text-xs text-gray-500 mb-3 leading-relaxed">
+        列顺序：标题,科目,年级,年份,难度,等级,是否带解析,来源链接,来源学校（按表头名称识别，顺序可不同）。<br>
+        必填：标题、科目、年份、来源链接；其余可留空，审核时再定。支持 UTF-8 / GBK 编码。
+        <a href="{{ url_for('csv_template') }}" class="text-blue-600 hover:underline">下载 CSV 模板</a>。
+        导入的数据进入待审核列表，<b>不会直接上线</b>，需人工复核后点「通过入库」。
+      </p>
+      <input type="file" id="csv-file" accept=".csv"
+             class="block w-full text-sm text-gray-600 file:mr-3 file:rounded file:border-0 file:bg-blue-50 file:px-3 file:py-1.5 file:text-blue-600 hover:file:bg-blue-100">
+      <div id="csv-preview" class="hidden mt-3"></div>
+      <div id="csv-result" class="hidden mt-3"></div>
+      <div class="flex justify-end gap-2 mt-4">
+        <button type="button" data-close class="px-3 py-1.5 border border-gray-300 rounded text-sm text-gray-600 hover:bg-gray-50">取消</button>
+        <button type="button" id="btn-csv-preview" class="px-3 py-1.5 border border-blue-300 rounded text-sm text-blue-600 hover:bg-blue-50" disabled>预览</button>
+        <button type="button" id="btn-csv-submit" class="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded text-sm" disabled>确认导入</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 手动录入弹窗 -->
+  <div id="manual-modal" class="fixed inset-0 bg-black/40 z-50 hidden items-center justify-center p-4">
+    <div class="bg-white rounded-lg shadow-xl w-full max-w-2xl max-h-[85vh] overflow-y-auto p-5">
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="font-bold text-gray-800">✍️ 手动录入</h3>
+        <button type="button" data-close class="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
+      </div>
+      <div id="manual-error" class="hidden bg-red-50 border border-red-200 text-red-700 text-sm rounded px-4 py-3 mb-3"></div>
+      <form id="manual-form" class="grid grid-cols-2 gap-3">
+        <div class="col-span-2">
+          <label class="block text-xs font-medium text-gray-600 mb-1">标题 *</label>
+          <input type="text" name="title" required
+                 class="w-full border border-gray-300 rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-gray-600 mb-1">科目 *</label>
+          <select name="subject" required class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm bg-white">
+            <option value="">请选择</option>
+            {% for s in subjects %}
+            <option value="{{ s }}">{{ s }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-gray-600 mb-1">年级</label>
+          <select name="grade" class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm bg-white">
+            <option value="">未标注</option>
+            {% for g in grades %}
+            <option value="{{ g }}">{{ g }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-gray-600 mb-1">年份 *</label>
+          <input type="number" name="year" required min="2000" max="2100"
+                 class="w-full border border-gray-300 rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-gray-600 mb-1">难度</label>
+          <select name="difficulty" class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm bg-white">
+            <option value="">审核时再定</option>
+            {% for d, label in difficulties.items() %}
+            <option value="{{ d }}">{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-gray-600 mb-1">试卷等级</label>
+          <select name="level" class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm bg-white">
+            <option value="">审核时再定</option>
+            {% for l in levels %}
+            <option value="{{ l }}">{{ l }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="flex items-center gap-2 pb-1.5">
+          <input type="checkbox" name="has_answer" value="1" id="manual-has-answer" class="rounded">
+          <label for="manual-has-answer" class="text-xs font-medium text-gray-600">带解析</label>
+        </div>
+        <div class="col-span-2">
+          <label class="block text-xs font-medium text-gray-600 mb-1">来源链接 *</label>
+          <input type="url" name="source_url" required placeholder="https://…（网页地址，禁止 PDF 链接）"
+                 class="w-full border border-gray-300 rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+        </div>
+        <div class="col-span-2">
+          <label class="block text-xs font-medium text-gray-600 mb-1">来源学校</label>
+          <input type="text" name="source_school"
+                 class="w-full border border-gray-300 rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+        </div>
+      </form>
+      <div class="flex justify-end gap-2 mt-4">
+        <button type="button" data-close class="px-3 py-1.5 border border-gray-300 rounded text-sm text-gray-600 hover:bg-gray-50">取消</button>
+        <button type="button" id="btn-manual-submit" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-sm">提交</button>
+      </div>
+    </div>
+  </div>
 {% endblock %}
 
 {% block scripts %}
@@ -161,6 +271,125 @@ document.addEventListener('DOMContentLoaded', function () {
         btn.textContent = original;
       }
     });
+  });
+
+  // ---- CSV 导入 / 手动录入弹窗逻辑 ----
+  const csvModal = document.getElementById('csv-modal');
+  const manualModal = document.getElementById('manual-modal');
+  const csvFile = document.getElementById('csv-file');
+  const csvPreview = document.getElementById('csv-preview');
+  const csvResult = document.getElementById('csv-result');
+  const btnCsvPreview = document.getElementById('btn-csv-preview');
+  const btnCsvSubmit = document.getElementById('btn-csv-submit');
+  const openModal = m => { m.classList.remove('hidden'); m.classList.add('flex'); };
+  const closeModal = m => { m.classList.add('hidden'); m.classList.remove('flex'); };
+  const esc = s => String(s).replace(/[&<>"']/g,
+    c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+  document.getElementById('btn-import-csv').addEventListener('click', () => openModal(csvModal));
+  document.getElementById('btn-manual-add').addEventListener('click', () => openModal(manualModal));
+  document.querySelectorAll('[data-close]').forEach(b => b.addEventListener('click', () => {
+    closeModal(csvModal); closeModal(manualModal);
+  }));
+
+  csvFile.addEventListener('change', () => {
+    btnCsvPreview.disabled = !csvFile.files.length;
+    btnCsvSubmit.disabled = true;
+    btnCsvSubmit.textContent = '确认导入';
+    csvPreview.classList.add('hidden'); csvPreview.innerHTML = '';
+    csvResult.classList.add('hidden'); csvResult.innerHTML = '';
+  });
+
+  // 预览：读取前 5 行（客户端粗解析仅作展示；真正的解析与校验在服务端）
+  btnCsvPreview.addEventListener('click', () => {
+    const file = csvFile.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const lines = String(reader.result).split(/\r?\n/).filter(l => l.trim());
+      const rows = lines.map(l => l.split(',').map(c => c.trim()));
+      let html = '<div class="text-xs text-gray-500 mb-1">预览（前 5 行，共 ' + rows.length + ' 行）：</div>';
+      html += '<div class="overflow-x-auto border border-gray-200 rounded"><table class="min-w-full text-xs">';
+      rows.slice(0, 5).forEach(r => {
+        html += '<tr class="border-b border-gray-100">' +
+          r.map(c => '<td class="px-2 py-1 whitespace-nowrap">' + esc(c) + '</td>').join('') + '</tr>';
+      });
+      html += '</table></div>';
+      csvPreview.innerHTML = html;
+      csvPreview.classList.remove('hidden');
+      btnCsvSubmit.disabled = false;
+    };
+    reader.readAsText(file, 'utf-8');
+  });
+
+  // 确认导入：调用 csv_import 接口，展示"成功 N 条 + 错误行明细"
+  btnCsvSubmit.addEventListener('click', async () => {
+    const file = csvFile.files[0];
+    if (!file) return;
+    btnCsvSubmit.disabled = true;
+    btnCsvSubmit.textContent = '导入中…';
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const resp = await fetch('{{ url_for("csv_import") }}', { method: 'POST', body: fd });
+      const data = await resp.json().catch(() => ({}));
+      let html = '';
+      if (data.ok) {
+        const color = data.errors.length ? 'text-amber-700' : 'text-green-700';
+        html = '<div class="text-sm font-medium mb-2 ' + color + '">导入完成：成功 ' + data.imported +
+               ' 条' + (data.errors.length ? '，错误 ' + data.errors.length + ' 行（合法行已全部导入）' : '') + '</div>';
+        if (data.errors.length) {
+          html += '<div class="overflow-x-auto border border-amber-200 rounded bg-amber-50"><table class="min-w-full text-xs">' +
+            '<thead><tr class="text-left text-amber-700"><th class="px-2 py-1">行号</th><th class="px-2 py-1">原因</th></tr></thead><tbody>';
+          data.errors.forEach(e => {
+            html += '<tr class="border-t border-amber-200"><td class="px-2 py-1">' + e.row +
+                    '</td><td class="px-2 py-1">' + esc(e.reason) + '</td></tr>';
+          });
+          html += '</tbody></table></div>';
+        }
+        btnCsvSubmit.textContent = '完成';
+        btnCsvSubmit.onclick = () => location.reload();
+      } else {
+        html = '<div class="text-sm text-red-600 font-medium">' + esc(data.error || '导入失败，请检查文件') + '</div>';
+        btnCsvSubmit.textContent = '确认导入';
+        btnCsvSubmit.disabled = false;
+      }
+      csvResult.innerHTML = html;
+      csvResult.classList.remove('hidden');
+    } catch (e) {
+      csvResult.innerHTML = '<div class="text-sm text-red-600 font-medium">导入失败：网络或服务器错误</div>';
+      csvResult.classList.remove('hidden');
+      btnCsvSubmit.textContent = '确认导入';
+      btnCsvSubmit.disabled = false;
+    }
+  });
+
+  // 手动录入提交：成功刷新页面（新记录出现在待审核列表顶部）
+  const manualForm = document.getElementById('manual-form');
+  const manualError = document.getElementById('manual-error');
+  document.getElementById('btn-manual-submit').addEventListener('click', async () => {
+    if (!manualForm.reportValidity()) return;
+    manualError.classList.add('hidden');
+    const btn = document.getElementById('btn-manual-submit');
+    btn.disabled = true;
+    btn.textContent = '提交中…';
+    try {
+      const resp = await fetch('{{ url_for("manual_add") }}', { method: 'POST', body: new FormData(manualForm) });
+      const data = await resp.json().catch(() => ({}));
+      if (data.ok) {
+        location.reload();
+      } else {
+        manualError.textContent = data.error || '录入失败，请检查字段';
+        manualError.classList.remove('hidden');
+        btn.disabled = false;
+        btn.textContent = '提交';
+      }
+    } catch (e) {
+      manualError.textContent = '录入失败：网络或服务器错误';
+      manualError.classList.remove('hidden');
+      btn.disabled = false;
+      btn.textContent = '提交';
+    }
   });
 });
 </script>

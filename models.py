@@ -60,6 +60,10 @@ CREATE TABLE IF NOT EXISTS pending_paper (
     source_url    TEXT,                                   -- 原始网页链接
     source_school TEXT,                                   -- 来源
     page_summary  TEXT NOT NULL DEFAULT '',               -- 网页原文摘要（AI 预审参考）
+    grade         TEXT NOT NULL DEFAULT '',               -- 年级：高一/高二/高三，空=未标注
+    difficulty    INTEGER,                                -- 难度：1-4，空=审核时再定
+    level         TEXT NOT NULL DEFAULT '',               -- 含金量等级，空=审核时再定
+    has_answer    BOOLEAN NOT NULL DEFAULT 0,             -- 是否带解析
     crawl_time    DATETIME                                -- 抓取时间
 );
 """
@@ -108,11 +112,30 @@ def init_db(db_path):
             )
         # 旧库迁移：pending_paper 表补充 page_summary 列（网页原文摘要，
         # 供 AI 预审读取；旧记录为空，AI 预审时仅依据标题推断）。
+        # 以及 CSV 导入/手动录入的预填字段（grade/difficulty/level/has_answer，
+        # 审核表单据此预填，管理员最终确认）。
         pending_cols = [row[1] for row in conn.execute("PRAGMA table_info(pending_paper)")]
         if "page_summary" not in pending_cols:
             conn.execute(
                 "ALTER TABLE pending_paper"
                 " ADD COLUMN page_summary TEXT NOT NULL DEFAULT ''"
+            )
+        if "grade" not in pending_cols:
+            conn.execute(
+                "ALTER TABLE pending_paper"
+                " ADD COLUMN grade TEXT NOT NULL DEFAULT ''"
+            )
+        if "difficulty" not in pending_cols:
+            conn.execute("ALTER TABLE pending_paper ADD COLUMN difficulty INTEGER")
+        if "level" not in pending_cols:
+            conn.execute(
+                "ALTER TABLE pending_paper"
+                " ADD COLUMN level TEXT NOT NULL DEFAULT ''"
+            )
+        if "has_answer" not in pending_cols:
+            conn.execute(
+                "ALTER TABLE pending_paper"
+                " ADD COLUMN has_answer BOOLEAN NOT NULL DEFAULT 0"
             )
         conn.commit()
     finally:
@@ -398,21 +421,43 @@ def clear_view_history(db_path, user_id):
 
 
 def add_pending_paper(db_path, title, subject, year, source_url,
-                      source_school=None, page_summary=""):
-    """写入一条爬虫采集的待审核元数据（管理员审核通过前不上线）。返回记录 id。
+                      source_school=None, page_summary="", grade="",
+                      difficulty=None, level="", has_answer=0):
+    """写入一条待审核元数据（爬虫采集或管理员录入，审核通过前不上线）。
 
-    page_summary 为爬虫抓到的网页原文摘要，供 AI 预审参考（可为空）。
+    返回记录 id。page_summary 为爬虫抓到的网页原文摘要，供 AI 预审参考；
+    grade/difficulty/level/has_answer 为可选预填值，审核时管理员最终确认。
     """
     conn = get_db(db_path)
     try:
         cur = conn.execute(
             "INSERT INTO pending_paper (title, subject, year, source_url,"
-            " source_school, page_summary, crawl_time)"
-            " VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)",
-            (title, subject, year, source_url, source_school, page_summary),
+            " source_school, page_summary, grade, difficulty, level,"
+            " has_answer, crawl_time)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)",
+            (title, subject, year, source_url, source_school, page_summary,
+             grade, difficulty, level, has_answer),
         )
         conn.commit()
         return cur.lastrowid
+    finally:
+        conn.close()
+
+
+def source_url_exists(db_path, source_url):
+    """source_url 已存在于待审核表或试卷表时返回 True（导入/录入去重用）。"""
+    conn = get_db(db_path)
+    try:
+        if conn.execute(
+            "SELECT 1 FROM pending_paper WHERE source_url = ?", (source_url,)
+        ).fetchone():
+            return True
+        return (
+            conn.execute(
+                "SELECT 1 FROM paper WHERE source_url = ?", (source_url,)
+            ).fetchone()
+            is not None
+        )
     finally:
         conn.close()
 

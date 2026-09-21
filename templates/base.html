@@ -4,7 +4,36 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{% block title %}PaperHub 高中精品试卷库{% endblock %}</title>
+  <meta name="csrf-token" content="{{ csrf_token }}">
   <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    // CSRF 防护：全局包装 fetch，所有同源的非 GET 请求自动携带 X-CSRFToken
+    // 请求头（后端对所有 POST 接口统一校验，见 csrf_protect.py）。
+    // 页面内已有的 fetch 调用无需任何改动。
+    (function () {
+      var meta = document.querySelector('meta[name="csrf-token"]');
+      var token = meta ? meta.getAttribute('content') : '';
+      if (!token || !window.fetch) return;
+      var origFetch = window.fetch;
+      window.fetch = function (url, options) {
+        options = options || {};
+        var method = String(options.method || 'GET').toUpperCase();
+        if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') {
+          return origFetch(url, options);
+        }
+        try {
+          // 仅同源请求附带 token（跨域请求不泄露 token，也不触发 CORS 预检）
+          if (new URL(String(url), location.href).origin !== location.origin) {
+            return origFetch(url, options);
+          }
+        } catch (e) { /* 无法解析的 URL 按同源处理 */ }
+        var headers = new Headers(options.headers || {});
+        if (!headers.has('X-CSRFToken')) headers.set('X-CSRFToken', token);
+        options.headers = headers;
+        return origFetch(url, options);
+      };
+    })();
+  </script>
 </head>
 <body class="min-h-screen bg-gray-100">
   <header class="bg-white shadow">

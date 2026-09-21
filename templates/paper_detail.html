@@ -41,10 +41,12 @@
          class="bg-blue-600 hover:bg-blue-700 text-white rounded px-4 py-2 text-sm">前往源站查看</a>
       {% if collected %}
       <form method="post" action="{{ url_for('toggle_collect', paper_id=paper['id']) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <button type="submit" class="bg-gray-200 hover:bg-gray-300 text-gray-700 rounded px-4 py-2 text-sm">取消收藏</button>
       </form>
       {% else %}
       <form method="post" action="{{ url_for('toggle_collect', paper_id=paper['id']) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <button type="submit" class="bg-amber-500 hover:bg-amber-600 text-white rounded px-4 py-2 text-sm">收藏</button>
       </form>
       {% endif %}

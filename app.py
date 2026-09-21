@@ -14,12 +14,17 @@ from flask import (
 
 import ai_review
 import config
+import csrf_protect
 import models
 import paper_import
 from crawler import spider as crawler
 
 app = Flask(__name__)
 app.config.from_object(config.Config)
+
+# CSRF 防护：全部 POST 接口统一校验会话 Token（无合法 Token 一律 403），
+# 表单隐藏域 csrf_token / 请求头 X-CSRFToken 二选一，见 csrf_protect.py
+csrf_protect.init_csrf(app)
 
 # 爬虫日志：独立 logger（INFO 级别），输出到服务控制台；
 # 不提升根 logger 级别，避免影响 Flask/Werkzeug 自身日志。

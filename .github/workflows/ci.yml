@@ -1,0 +1,26 @@
+# GitHub Actions CI：推送代码自动跑 pytest 全部测试用例。
+# 测试不通过则 main 分支保护规则（required status check: test）阻断合并，
+# 保证进入 main 的代码永远测试全绿。
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: 运行 pytest 全部测试用例
+        run: python -m pytest tests -v

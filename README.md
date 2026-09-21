@@ -32,6 +32,7 @@ PaperHub 核心思路：
 | 元数据爬虫 | requests + BeautifulSoup 采集标题/学科/年份/来源链接/网页摘要；**40 个频道**顺序采集（学科 6：高考题库/数学/语文/英语/理综/文综；省份真题 29：各省高考频道+高考改革/考试说明；边缘真题 5：语文答案/作文/压题等），三重过滤（标题须含试题/试卷、跳过下载按钮、跳过描述性链接）挡掉资讯类内容，逐频道容错（单频道失败记录日志并继续），robots 逐路径检查、2 秒限速、按 source_url 去重、可重复执行 |
 | 后台爬虫任务 | 管理员在审核面板一键【启动爬虫】：后台线程执行采集（40 频道全程约 3 分钟），前端轮询展示每频道状态/解析/新增明细；同一时间只允许一个任务，重复触发友好提示；采集数据仅入待审核表，绝不自动上线 |
 | 管理员审核面板 | 分页查看待审核元数据、审核通过入库（同一事务）、驳回删除；导入/录入字段自动预填审核表单；普通用户 403 且无入口 |
+| CSRF 防护 | 全部 POST 接口统一校验会话 Token（表单隐藏域 `csrf_token` / 请求头 `X-CSRFToken`），无合法 Token 一律 403；前端表单自动携带隐藏域、全局 fetch 封装自动附带请求头，会话 Cookie `SameSite=Lax` 纵深防御 |
 | CSV 批量导入 / 手动录入 | 管理员上传 CSV（UTF-8/GBK，附模板下载、前端预览）或弹窗手动录入；逐行校验（枚举/年份/链接合法性，**拒绝 PDF 链接**），合法行入待审核表、错误行汇总"行号+原因"；**不直接入库** |
 | AI 预审（审核辅助） | DeepSeek 大模型读取待审核记录的标题+网页摘要，自动提取学科/年级/年份/难度/等级/是否带解析并预填审核表单；**仅预填不自动入库**，人工复核后手动入库；调用失败/超时友好提示不崩溃 |
 
@@ -48,8 +49,12 @@ PaperHub 核心思路：
 - HTML + TailwindCSS（CDN）
 - 模板继承：`templates/base.html` 提供全站统一导航栏、搜索框、容器宽度与分页样式
 
-### 部署
-本地开发；可部署到 PythonAnywhere / Vercel
+### 部署 / 测试 / CI
+- 本地开发；可部署到 PythonAnywhere / Vercel
+- 测试：pytest 正式测试套件（`tests/`，77 个用例，临时数据库、绝不触碰真实库）
+- CI：GitHub Actions（`.github/workflows/ci.yml`），推送自动跑全部测试
+
+![CI](https://github.com/yjk11-bit/paperhub/actions/workflows/ci.yml/badge.svg)
 
 ## 🚀 快速开始
 
@@ -75,6 +80,9 @@ sqlite3 instance\paperhub.db "UPDATE user SET is_admin=1 WHERE username='你的�
 #    填入 DeepSeek API Key（https://platform.deepseek.com 创建），重启服务后
 #    审核面板每条待审核记录旁即可点【AI预审】。该文件已被 .gitignore 忽略，
 #    绝不会提交到 git；未配置时接口返回友好提示，不影响其他功能。
+
+# 7.（可选）本地运行全部测试用例（测试使用临时数据库，不触碰真实数据）
+.venv\Scripts\python -m pytest tests -v
 ```
 
 > 数据库文件位于 `instance/paperhub.db`（已加入 .gitignore，不提交到 git）。
@@ -122,6 +130,9 @@ vibecoding/
 ├── models.py            # 数据模型：建表、迁移、全部增删改查函数
 ├── ai_review.py         # AI 预审模块：DeepSeek 调用、严格 JSON 解析、字段枚举收敛
 ├── paper_import.py      # CSV 解析与字段校验（导入/手动录入共用，拒绝 PDF 链接）
+├── csrf_protect.py      # CSRF 防护：会话 Token 生成/校验，全部 POST 统一 403 拦截
+├── tests/               # pytest 正式测试套件（临时数据库，不触碰真实数据）
+├── .github/workflows/   # GitHub Actions CI（推送自动跑测试，失败阻断合并 main）
 ├── config.py            # 应用配置（SECRET_KEY、数据库路径、DeepSeek Key、上传上限）
 ├── local_config.example.py # 本地配置模板（复制为 local_config.py 填 DeepSeek Key，git 忽略）
 ├── crawler/
@@ -143,12 +154,30 @@ vibecoding/
 
 ## 🧪 测试
 
-每个功能模块交付前执行两套测试：
+### pytest 正式测试套件（`tests/`，77 个用例，可一键执行）
 
-1. **单元冒烟测试**：Flask test client + 临时数据库，覆盖路由权限、搜索/筛选、收藏、浏览历史、审核流程、爬虫解析与 robots 合规（离线 mock）；严禁写死主键，全部动态查询真实 id。
-2. **真实服务 curl 集成测试**：启动真实服务，用 curl + cookie jar 走完整用户流程，中文表单用百分号编码提交。
+```bash
+.venv\Scripts\python -m pytest tests -v    # Windows
+```
 
-测试全部通过、清理测试数据与临时脚本后，才允许 git commit。
+| 文件 | 覆盖范围 |
+|---|---|
+| `tests/test_csrf.py` | CSRF 防护：全部 POST 接口无 Token 一律 403、合法 Token（隐藏域/请求头）正常放行、GET 不受影响 |
+| `tests/test_auth.py` | 注册/登录/退出流程回归 |
+| `tests/test_admin_pending.py` | 审核通过（含 8 种非法字段校验）/驳回/AI 预审（monkeypatch 离线模拟 DeepSeek，绝不发真实请求）/权限控制 |
+| `tests/test_admin_import.py` | CSV 导入（UTF-8/GBK、部分成功、行号+原因、PDF 拒绝、500 行上限）/手动录入（表单/JSON 双通道）/CSV 模板 |
+| `tests/test_admin_crawl.py` | 爬虫触发/状态轮询/运行守卫/异常转 error/权限/CLI（离线模拟爬虫） |
+| `tests/test_spider.py` | 爬虫解析三重过滤、PDF 双形态拒绝、robots 合规、逐频道容错、2 秒限速、去重（离线 mock） |
+
+约定：**严禁写死主键 id**，测试数据全部动态生成；每个测试使用独立临时数据库（环境变量 `PAPERHUB_DATABASE`），绝不触碰真实 `instance/paperhub.db`；离线 mock，不发真实网络请求。
+
+### GitHub Actions CI（`.github/workflows/ci.yml`）
+
+推送任意分支 / 向 main 发起 PR 时自动执行：安装依赖 → 运行 pytest 全部测试。测试不通过即失败；main 分支已配置保护规则（required status check `test`），测试失败的代码无法合并进 main。
+
+### 真实服务 curl 集成测试（交付前执行）
+
+启动真实服务，用 curl + cookie jar 走完整用户流程（注册/登录/CSRF 403 与放行/管理员操作），结束后清理测试数据与临时脚本，才允许 git commit。
 
 ## 📌 已知取舍与后续规划
 
@@ -161,4 +190,6 @@ vibecoding/
 - **后台爬虫任务为内存态**：任务状态只保留最近一次，重启服务后清空；采集中途重启服务会中断任务，重新点击【启动爬虫】即可。
 - 爬虫学科/年份识别基于标题关键词与正则，匹配不到时字段为 `未识别`，由管理员审核时人工补全。
 - 列表页表格中的下载按钮链接（文字为“试题/答案/作文”等通用标签，且指向的详情页可能已失效）会被爬虫直接跳过，不进入待审核。
-- 后续规划：试卷上下架、标签编辑、管理员手动录入、CSRF 防护、生产环境部署（PythonAnywhere / Vercel）。
+- **CSRF 防护为轻量自实现**（`csrf_protect.py`，约 70 行，不引入额外依赖）：会话级随机 Token + `secrets.compare_digest` 恒定时间比较；所有 POST（含登录/注册）统一在 `before_request` 校验，无合法 Token 返回 403；GET 等无副作用方法不校验。前端配套：全部 POST 表单加隐藏域，base.html 的全局 fetch 封装自动为同源非 GET 请求附 `X-CSRFToken` 请求头（跨域请求不携带、不触发 CORS 预检）。
+- **CI 与 main 分支保护**：GitHub Actions 在推送/PR 时跑 pytest；main 已配置 required status check `test`（不强制管理员：仓库主仍可按分步开发节奏直推 main，非管理员提交/PR 合并必须测试全绿）。
+- 后续规划：试卷上下架、标签编辑、生产环境部署（PythonAnywhere / Vercel）。

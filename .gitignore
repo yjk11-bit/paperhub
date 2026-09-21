@@ -4,6 +4,9 @@ __pycache__/
 *.pyo
 *.pyd
 
+# pytest 缓存
+.pytest_cache/
+
 # 虚拟环境
 .venv/
 venv/

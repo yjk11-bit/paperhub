@@ -16,6 +16,7 @@
     <div class="mb-4 bg-red-50 border border-red-200 text-red-700 text-sm rounded px-4 py-2">{{ error }}</div>
     {% endif %}
     <form method="post" class="space-y-4">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <div>
         <label for="username" class="block text-sm font-medium text-gray-700 mb-1">用户名</label>
         <input type="text" id="username" name="username" value="{{ username or '' }}" required

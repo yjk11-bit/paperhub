@@ -9,6 +9,7 @@
       {% if rows %}
       <form method="post" action="{{ url_for('clear_history') }}"
             onsubmit="return confirm('确定要清空全部浏览历史吗？');">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <button type="submit" class="text-sm text-red-500 hover:text-red-600">清空全部</button>
       </form>
       {% endif %}
@@ -24,6 +25,7 @@
           </p>
         </div>
         <form method="post" action="{{ url_for('delete_history', history_id=row['history_id']) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
           <button type="submit" class="text-xs text-gray-400 hover:text-red-500 shrink-0">删除</button>
         </form>
       </li>

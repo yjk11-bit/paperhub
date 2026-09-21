@@ -11,6 +11,7 @@
 - 抓取限速：每两次请求之间至少间隔 CRAWL_DELAY_SECONDS 秒
 - 遵守 robots 协议：抓取前检查 robots.txt，目标路径被禁止则中止
 """
+import logging
 import re
 import time
 import urllib.parse
@@ -20,9 +21,20 @@ from bs4 import BeautifulSoup
 
 import models
 
+logger = logging.getLogger("paperhub.crawler")
+
 BASE_URL = "https://www.51test.net"
-# 列表页路径：高考真题(gkst) / 高考模拟试题(st) / 高考真题频道(zt)
-LIST_PATHS = ["/gaokao/gkst/", "/gaokao/st/", "/gaokao/zt/"]
+# 采集频道（(路径, 名称)）：高考题库 / 数学 / 语文 / 英语 / 理综 / 文综。
+# 只采集各频道首页：该站翻页子域（key/top.51test.net）403 反爬且主站
+# 列表页无翻页链接，翻页采集方案已放弃（Step-10 结论）。
+CHANNELS = [
+    ("/gaokao/gaokaotiku/", "高考题库"),
+    ("/gaokao/shuxue/", "数学"),
+    ("/gaokao/yuwen/", "语文"),
+    ("/gaokao/yingyu/", "英语"),
+    ("/gaokao/lizong/", "理综"),
+    ("/gaokao/wenzong/", "文综"),
+]
 # 限速：每两次请求间隔秒数
 CRAWL_DELAY_SECONDS = 2
 TIMEOUT = 15
@@ -107,7 +119,8 @@ def parse_papers(html, base_url=BASE_URL):
     for a in soup.select("a[href*='/show/']"):
         href = urllib.parse.urljoin(base_url, a["href"])
         # source_url 只允许保存网页地址，指向 PDF 文件的链接一律跳过
-        if href.lower().endswith(".pdf"):
+        # （与 fetch_html 的拒绝规则一致：.pdf 后缀或 .pdf? 查询串形式都拒绝）
+        if href.lower().endswith(".pdf") or ".pdf?" in href.lower():
             continue
         title = a.get_text(strip=True)
         if (not title or title in _GENERIC_LABELS
@@ -160,32 +173,73 @@ def _url_exists(db_path, source_url):
         conn.close()
 
 
-def crawl(db_path, list_paths=None):
-    """抓取列表页元数据并写入待审核表。返回新增条数。
+def crawl_channel(db_path, path, label):
+    """采集单个频道并写入待审核表，任何异常都不上抛（逐频道容错）。
 
-    流程：逐个路径 robots 检查（任一被禁即中止）→ 逐页抓取（页间隔限速）→
-    解析 → 按 source_url 去重 → 写 pending_paper。
+    返回 dict 结果：status 为 ok（成功）/ robots_denied（robots 禁止，跳过）/
+    failed（请求或解析失败），error 为失败原因（成功时为空串）；
+    parsed 为解析到的条数、added 为去重后新增条数。
     """
-    list_paths = list_paths or LIST_PATHS
-    for path in list_paths:
+    result = {
+        "path": path, "label": label, "status": "ok",
+        "parsed": 0, "added": 0, "error": "",
+    }
+    try:
         if not robots_allowed(path):
-            raise RuntimeError(f"robots 协议禁止抓取目标路径 {path}，爬虫已中止")
-    added = 0
-    for i, path in enumerate(list_paths):
-        if i:
-            # 页间限速：第一次请求前不等待，之后每次抓取前间隔 CRAWL_DELAY_SECONDS
-            time.sleep(CRAWL_DELAY_SECONDS)
+            result["status"] = "robots_denied"
+            result["error"] = "robots 协议禁止抓取该频道"
+            logger.warning("跳过频道 %s（%s）：robots 禁止", path, label)
+            return result
         html = fetch_html(BASE_URL + path)
-        for item in parse_papers(html):
-            if item["source_url"] and not _url_exists(db_path, item["source_url"]):
-                models.add_pending_paper(
-                    db_path,
-                    item["title"],
-                    item["subject"],
-                    item["year"],
-                    item["source_url"],
-                    item["source_school"],
-                    page_summary=item["page_summary"],
-                )
-                added += 1
-    return added
+    except Exception as exc:
+        # 单个频道请求失败不中断整体爬虫：记录错误日志，继续采集其余频道
+        result["status"] = "failed"
+        result["error"] = f"{type(exc).__name__}: {exc}"
+        logger.error("频道 %s（%s）抓取失败: %s", path, label, exc, exc_info=True)
+        return result
+    try:
+        items = parse_papers(html)
+    except Exception as exc:
+        result["status"] = "failed"
+        result["error"] = f"解析失败: {type(exc).__name__}"
+        logger.error("频道 %s（%s）解析失败: %s", path, label, exc, exc_info=True)
+        return result
+    result["parsed"] = len(items)
+    for item in items:
+        if item["source_url"] and not _url_exists(db_path, item["source_url"]):
+            models.add_pending_paper(
+                db_path,
+                item["title"],
+                item["subject"],
+                item["year"],
+                item["source_url"],
+                item["source_school"],
+                page_summary=item["page_summary"],
+            )
+            result["added"] += 1
+    logger.info(
+        "频道 %s（%s）采集完成：解析 %d 条，新增 %d 条",
+        path, label, result["parsed"], result["added"],
+    )
+    return result
+
+
+def crawl(db_path, channels=None):
+    """依次采集各频道元数据并写入待审核表（可重复执行，去重靠 source_url）。
+
+    返回 dict：results 为每频道结果列表、total_added 为全部新增条数。
+    频道间限速；单个频道失败不影响其余频道。采集数据仅进入待审核表，
+    经管理员人工审核后才上线（绝不自动入库）。
+    """
+    channels = channels or CHANNELS
+    results = []
+    total_added = 0
+    for i, (path, label) in enumerate(channels):
+        if i:
+            # 频道间限速：第一次请求前不等待，之后每次抓取前间隔 CRAWL_DELAY_SECONDS
+            time.sleep(CRAWL_DELAY_SECONDS)
+        result = crawl_channel(db_path, path, label)
+        results.append(result)
+        total_added += result["added"]
+    logger.info("爬虫采集结束：共 %d 个频道，新增待审核 %d 条", len(results), total_added)
+    return {"results": results, "total_added": total_added}

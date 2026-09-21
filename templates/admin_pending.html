@@ -5,6 +5,7 @@
     <h2 class="text-lg font-bold text-gray-800">待审核试卷（爬虫采集 / CSV 导入 / 手动录入）</h2>
     <div class="flex items-center gap-2">
       <span class="text-sm text-gray-500 mr-1">共 {{ total }} 条待审核记录</span>
+      <button type="button" id="btn-start-crawl" class="text-sm bg-violet-600 hover:bg-violet-700 text-white rounded px-3 py-1.5">🕷️ 启动爬虫</button>
       <button type="button" id="btn-import-csv" class="text-sm bg-blue-600 hover:bg-blue-700 text-white rounded px-3 py-1.5">📥 导入CSV</button>
       <button type="button" id="btn-manual-add" class="text-sm bg-emerald-600 hover:bg-emerald-700 text-white rounded px-3 py-1.5">✍️ 手动录入</button>
     </div>
@@ -231,6 +232,20 @@
       </div>
     </div>
   </div>
+
+  <!-- 爬虫采集弹窗 -->
+  <div id="crawl-modal" class="fixed inset-0 bg-black/40 z-50 hidden items-center justify-center p-4">
+    <div class="bg-white rounded-lg shadow-xl w-full max-w-2xl max-h-[85vh] overflow-y-auto p-5">
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="font-bold text-gray-800">🕷️ 爬虫采集（6 个频道）</h3>
+        <button type="button" data-close-crawl class="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
+      </div>
+      <div id="crawl-body" class="text-sm text-gray-600"></div>
+      <div class="flex justify-end gap-2 mt-4">
+        <button type="button" id="btn-crawl-close" class="px-3 py-1.5 bg-violet-600 hover:bg-violet-700 text-white rounded text-sm">完成</button>
+      </div>
+    </div>
+  </div>
 {% endblock %}
 
 {% block scripts %}
@@ -391,6 +406,108 @@ document.addEventListener('DOMContentLoaded', function () {
       btn.textContent = '提交';
     }
   });
+
+  // ---- 后台爬虫任务：启动 + 轮询状态 ----
+  const crawlModal = document.getElementById('crawl-modal');
+  const crawlBody = document.getElementById('crawl-body');
+  const btnCrawl = document.getElementById('btn-start-crawl');
+  let crawlTimer = null;
+  const CRAWL_RUNNING_HTML =
+    '<div class="flex items-center gap-2 py-4">' +
+    '<span class="animate-spin inline-block w-4 h-4 border-2 border-violet-500 border-t-transparent rounded-full"></span>' +
+    '<span>正在采集 6 个频道，请稍候（逐频道限速，全程约 1 分钟）…</span></div>' +
+    '<p class="text-xs text-gray-400">采集结果只进入待审核队列，不会自动上线；期间可关闭本弹窗，任务在后台继续。</p>';
+  const CRAWL_STATUS_TEXT = { ok: '✅ 成功', robots_denied: '⏭️ robots 禁止', failed: '❌ 失败' };
+
+  function stopCrawlPolling() {
+    if (crawlTimer) { clearInterval(crawlTimer); crawlTimer = null; }
+    btnCrawl.disabled = false;
+    btnCrawl.textContent = '🕷️ 启动爬虫';
+  }
+
+  function renderCrawlResults(data) {
+    const rs = data.results || [];
+    let html = '<div class="text-sm font-medium mb-2">采集完成：共新增 <span class="text-green-600">' +
+               data.total_added + '</span> 条，已进入待审核队列（需人工审核后上线）</div>';
+    html += '<div class="overflow-x-auto border border-gray-200 rounded"><table class="min-w-full text-xs">' +
+      '<thead><tr class="text-left text-gray-500"><th class="px-2 py-1">频道</th><th class="px-2 py-1">状态</th>' +
+      '<th class="px-2 py-1">解析</th><th class="px-2 py-1">新增</th><th class="px-2 py-1">说明</th></tr></thead><tbody>';
+    rs.forEach(r => {
+      html += '<tr class="border-t border-gray-100"><td class="px-2 py-1">' + esc(r.label) +
+        ' <span class="text-gray-400">' + esc(r.path) + '</span></td>' +
+        '<td class="px-2 py-1">' + (CRAWL_STATUS_TEXT[r.status] || esc(r.status)) + '</td>' +
+        '<td class="px-2 py-1">' + r.parsed + '</td><td class="px-2 py-1">' + r.added + '</td>' +
+        '<td class="px-2 py-1 text-gray-500">' + esc(r.error || '—') + '</td></tr>';
+    });
+    html += '</tbody></table></div>';
+    html += '<p class="text-xs text-gray-400 mt-2">开始于 ' + esc(data.started_at || '—') +
+            '，结束于 ' + esc(data.finished_at || '—') + '。</p>';
+    crawlBody.innerHTML = html;
+  }
+
+  async function pollCrawlStatus() {
+    try {
+      const resp = await fetch('{{ url_for("admin_crawl_status") }}');
+      if (!resp.ok) { stopCrawlPolling(); return; }
+      const data = await resp.json();
+      if (data.status === 'done') {
+        stopCrawlPolling();
+        renderCrawlResults(data);
+      } else if (data.status === 'error') {
+        stopCrawlPolling();
+        crawlBody.innerHTML = '<div class="text-sm text-red-600 font-medium">采集任务异常：' +
+          esc(data.error || '未知错误') + '</div>' +
+          '<p class="text-xs text-gray-400 mt-2">详情见服务端日志，可重新点击「启动爬虫」重试。</p>';
+      }
+      // status === 'running'：继续轮询
+    } catch (e) {
+      stopCrawlPolling();
+    }
+  }
+
+  btnCrawl.addEventListener('click', async () => {
+    btnCrawl.disabled = true;
+    openModal(crawlModal);
+    crawlBody.innerHTML = '<div class="text-sm text-gray-500">正在检查任务状态…</div>';
+    try {
+      // 先查状态：已有任务在运行则直接进入轮询，避免重复启动
+      let resp = await fetch('{{ url_for("admin_crawl_status") }}');
+      let data = await resp.json().catch(() => ({}));
+      if (data.status !== 'running') {
+        resp = await fetch('{{ url_for("admin_start_crawl") }}', { method: 'POST' });
+        data = await resp.json().catch(() => ({}));
+      }
+      if (data.status === 'running') {
+        btnCrawl.textContent = '采集中…';
+        crawlBody.innerHTML = CRAWL_RUNNING_HTML;
+        crawlTimer = setInterval(pollCrawlStatus, 2000);
+      } else {
+        crawlBody.innerHTML = '<div class="text-sm text-amber-600 font-medium">' +
+          esc(data.error || '启动失败，请重试') + '</div>';
+        btnCrawl.disabled = false;
+      }
+    } catch (e) {
+      crawlBody.innerHTML = '<div class="text-sm text-red-600 font-medium">请求失败：网络或服务器错误</div>';
+      btnCrawl.disabled = false;
+    }
+  });
+
+  // 任务运行中允许关闭弹窗（后台继续采集）；完成后打开弹窗也能看到结果
+  document.getElementById('btn-crawl-close').addEventListener('click', () => location.reload());
+  document.querySelectorAll('[data-close-crawl]').forEach(b => b.addEventListener('click', () => {
+    closeModal(crawlModal);
+  }));
+
+  // 页面加载时若已有采集任务在运行（如刷新页面），自动恢复进度展示与轮询
+  fetch('{{ url_for("admin_crawl_status") }}').then(r => r.json()).then(data => {
+    if (data.status === 'running') {
+      btnCrawl.disabled = true;
+      btnCrawl.textContent = '采集中…';
+      openModal(crawlModal);
+      crawlBody.innerHTML = CRAWL_RUNNING_HTML;
+      crawlTimer = setInterval(pollCrawlStatus, 2000);
+    }
+  }).catch(() => {});
 });
 </script>
 {% endblock %}

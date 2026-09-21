@@ -2,6 +2,9 @@
 
 启动服务时自动初始化数据库（自动建表）。
 """
+import logging
+import threading
+from datetime import datetime
 from functools import wraps
 
 from flask import (
@@ -18,6 +21,17 @@ from crawler import spider as crawler
 app = Flask(__name__)
 app.config.from_object(config.Config)
 
+# 爬虫日志：独立 logger（INFO 级别），输出到服务控制台；
+# 不提升根 logger 级别，避免影响 Flask/Werkzeug 自身日志。
+_logging_handler = logging.StreamHandler()
+_logging_handler.setFormatter(
+    logging.Formatter("%(asctime)s [%(name)s] %(levelname)s: %(message)s")
+)
+paperhub_logger = logging.getLogger("paperhub")
+paperhub_logger.addHandler(_logging_handler)
+paperhub_logger.setLevel(logging.INFO)
+paperhub_logger.propagate = False
+
 # 启动时自动建表：数据库文件位于 instance/paperhub.db
 # （instance 目录已加入 .gitignore，数据库文件不会提交到 git）
 models.init_db(app.config["DATABASE"])
@@ -32,13 +46,58 @@ def init_db_command():
 
 @app.cli.command("crawl")
 def crawl_command():
-    """运行元数据爬虫（只采集元数据，写入待审核表）：flask --app app crawl"""
+    """运行元数据爬虫（多频道采集，只采集元数据，写入待审核表）：
+    flask --app app crawl"""
+    out = crawler.crawl(app.config["DATABASE"])
+    for r in out["results"]:
+        line = (f"{r['path']}（{r['label']}）：{r['status']}，"
+                f"解析 {r['parsed']} 条，新增 {r['added']} 条")
+        if r["error"]:
+            line += f"，{r['error']}"
+        print(line)
+    print(f"爬取完成，共新增待审核 {out['total_added']} 条（需管理员审核后上线）")
+
+
+# 后台爬虫任务状态（内存态，只记录最近一次任务；重启服务后清空）。
+# status: idle / running / done / error
+_crawl_task = {
+    "status": "idle",
+    "started_at": None,
+    "finished_at": None,
+    "results": None,
+    "total_added": 0,
+    "error": "",
+}
+_crawl_task_lock = threading.Lock()
+
+
+def _now_str():
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _run_crawl_task():
+    """后台线程执行多频道采集，结束后把结果写入 _crawl_task。
+
+    采集数据只写入 pending_paper 待审核表，绝不自动上线。
+    """
     try:
-        count = crawler.crawl(app.config["DATABASE"])
-    except RuntimeError as exc:
-        print("爬虫中止:", exc)
+        out = crawler.crawl(app.config["DATABASE"])
+    except Exception as exc:
+        paperhub_logger.error("后台爬虫任务异常: %s", exc, exc_info=True)
+        with _crawl_task_lock:
+            _crawl_task.update(
+                status="error",
+                error=f"{type(exc).__name__}: {exc}",
+                finished_at=_now_str(),
+            )
     else:
-        print(f"爬取完成，新增待审核 {count} 条（需管理员审核后上线）")
+        with _crawl_task_lock:
+            _crawl_task.update(
+                status="done",
+                results=out["results"],
+                total_added=out["total_added"],
+                finished_at=_now_str(),
+            )
 
 
 def login_required(view):
@@ -542,6 +601,41 @@ def manual_add():
         has_answer=1 if fields["has_answer"] else 0,
     )
     return jsonify(ok=True, id=new_id)
+
+
+@app.route("/admin/crawl", methods=["POST"])
+@admin_required
+def admin_start_crawl():
+    """启动后台爬虫任务（仅管理员）：遍历 6 个频道采集元数据写入待审核表。
+
+    任务在后台线程执行（频道间限速，全程约 1 分钟），前端轮询
+    /admin/crawl/status 查看进度与结果；同一时间只允许一个任务在跑，
+    运行中再次触发返回友好提示。采集数据仅入待审核表，不自动上线。
+    """
+    with _crawl_task_lock:
+        if _crawl_task["status"] == "running":
+            return jsonify(ok=False, error="爬虫任务正在运行中，请稍候再试")
+        _crawl_task.update(
+            status="running",
+            started_at=_now_str(),
+            finished_at=None,
+            results=None,
+            total_added=0,
+            error="",
+        )
+    thread = threading.Thread(target=_run_crawl_task, daemon=True)
+    thread.start()
+    paperhub_logger.info("后台爬虫任务已启动（由管理员触发）")
+    return jsonify(ok=True, status="running")
+
+
+@app.route("/admin/crawl/status")
+@admin_required
+def admin_crawl_status():
+    """后台爬虫任务状态查询（仅管理员），供前端轮询展示进度与结果。"""
+    with _crawl_task_lock:
+        task = dict(_crawl_task)
+    return jsonify(**task)
 
 
 @app.errorhandler(413)

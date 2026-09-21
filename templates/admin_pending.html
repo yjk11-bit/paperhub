@@ -237,7 +237,7 @@
   <div id="crawl-modal" class="fixed inset-0 bg-black/40 z-50 hidden items-center justify-center p-4">
     <div class="bg-white rounded-lg shadow-xl w-full max-w-2xl max-h-[85vh] overflow-y-auto p-5">
       <div class="flex items-center justify-between mb-3">
-        <h3 class="font-bold text-gray-800">🕷️ 爬虫采集（6 个频道）</h3>
+        <h3 class="font-bold text-gray-800">🕷️ 爬虫采集（40 个频道）</h3>
         <button type="button" data-close-crawl class="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
       </div>
       <div id="crawl-body" class="text-sm text-gray-600"></div>
@@ -415,7 +415,7 @@ document.addEventListener('DOMContentLoaded', function () {
   const CRAWL_RUNNING_HTML =
     '<div class="flex items-center gap-2 py-4">' +
     '<span class="animate-spin inline-block w-4 h-4 border-2 border-violet-500 border-t-transparent rounded-full"></span>' +
-    '<span>正在采集 6 个频道，请稍候（逐频道限速，全程约 1 分钟）…</span></div>' +
+    '<span>正在采集 40 个频道，请稍候（逐频道限速，全程约 3 分钟）…</span></div>' +
     '<p class="text-xs text-gray-400">采集结果只进入待审核队列，不会自动上线；期间可关闭本弹窗，任务在后台继续。</p>';
   const CRAWL_STATUS_TEXT = { ok: '✅ 成功', robots_denied: '⏭️ robots 禁止', failed: '❌ 失败' };
 

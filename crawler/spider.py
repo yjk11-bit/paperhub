@@ -24,16 +24,59 @@ import models
 logger = logging.getLogger("paperhub.crawler")
 
 BASE_URL = "https://www.51test.net"
-# 采集频道（(路径, 名称)）：高考题库 / 数学 / 语文 / 英语 / 理综 / 文综。
+# 采集频道（(路径, 名称)），共 40 个：
+# - 学科频道 6 个（Step-10）：高考题库 / 数学 / 语文 / 英语 / 理综 / 文综
+# - 省份真题频道 29 个（Step-10.5）：各省高考频道 + 高考改革 / 考试说明，
+#   按全站子频道扫描结果选取"能解析出试卷且不在库"的频道，其余 48 个
+#   资讯类频道（报名/查分/分数线等）不纳入采集
+# - 边缘真题频道 5 个（Step-10.5）：语文答案 / 作文 / 压题 / 压题作文 / 作文预测
 # 只采集各频道首页：该站翻页子域（key/top.51test.net）403 反爬且主站
 # 列表页无翻页链接，翻页采集方案已放弃（Step-10 结论）。
+# 注意：/gaokao/shanxi/ 是山西，/gaokao/shanxi1/ 是陕西（站点 URL 命名如此）。
 CHANNELS = [
+    # 学科频道
     ("/gaokao/gaokaotiku/", "高考题库"),
     ("/gaokao/shuxue/", "数学"),
     ("/gaokao/yuwen/", "语文"),
     ("/gaokao/yingyu/", "英语"),
     ("/gaokao/lizong/", "理综"),
     ("/gaokao/wenzong/", "文综"),
+    # 省份真题频道
+    ("/gaokao/anhui/", "安徽"),
+    ("/gaokao/beijing/", "北京"),
+    ("/gaokao/chongqing/", "重庆"),
+    ("/gaokao/fujian/", "福建"),
+    ("/gaokao/gansu/", "甘肃"),
+    ("/gaokao/guangdong/", "广东"),
+    ("/gaokao/guangxi/", "广西"),
+    ("/gaokao/guizhou/", "贵州"),
+    ("/gaokao/hainan/", "海南"),
+    ("/gaokao/heilongjiang/", "黑龙江"),
+    ("/gaokao/henan/", "河南"),
+    ("/gaokao/hubei/", "湖北"),
+    ("/gaokao/jiangsu/", "江苏"),
+    ("/gaokao/jiangxi/", "江西"),
+    ("/gaokao/jilin/", "吉林"),
+    ("/gaokao/liaoning/", "辽宁"),
+    ("/gaokao/neimeng/", "内蒙古"),
+    ("/gaokao/ningxia/", "宁夏"),
+    ("/gaokao/qinghai/", "青海"),
+    ("/gaokao/shanghai/", "上海"),
+    ("/gaokao/shanxi/", "山西"),
+    ("/gaokao/shanxi1/", "陕西"),
+    ("/gaokao/sichuan/", "四川"),
+    ("/gaokao/tianjin/", "天津"),
+    ("/gaokao/xizang/", "西藏"),
+    ("/gaokao/yunnan/", "云南"),
+    ("/gaokao/zhejiang/", "浙江"),
+    ("/gaokao/gaige/", "高考改革"),
+    ("/gaokao/kaoshishuoming/", "考试说明"),
+    # 边缘真题频道
+    ("/gaokao/yuwendaan/", "语文答案"),
+    ("/gaokao/zuowen/", "作文"),
+    ("/gaokao/yati/", "压题"),
+    ("/gaokao/yatizuowen/", "压题作文"),
+    ("/gaokao/zuowenyuce/", "作文预测"),
 ]
 # 限速：每两次请求间隔秒数
 CRAWL_DELAY_SECONDS = 2

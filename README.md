@@ -50,7 +50,7 @@ PaperHub 核心思路：
 - 模板继承：`templates/base.html` 提供全站统一导航栏、搜索框、容器宽度与分页样式
 
 ### 部署 / 测试 / CI
-- 本地开发；可部署到 PythonAnywhere / Vercel
+- 生产部署：香港轻量服务器（腾讯云，免备案、大陆可访问）Ubuntu 22.04 + gunicorn + systemd，一键脚本 `deploy/deploy.py`（分阶段执行），线上地址 http://119.28.46.242
 - 测试：pytest 正式测试套件（`tests/`，77 个用例，临时数据库、绝不触碰真实库）
 - CI：GitHub Actions（`.github/workflows/ci.yml`），推送自动跑全部测试
 
@@ -83,6 +83,9 @@ sqlite3 instance\paperhub.db "UPDATE user SET is_admin=1 WHERE username='你的�
 
 # 7.（可选）本地运行全部测试用例（测试使用临时数据库，不触碰真实数据）
 .venv\Scripts\python -m pytest tests -v
+
+# 8.（可选）部署到公网服务器（香港轻量免备案，详见 deploy/DEPLOY.md）
+PAPERHUB_DEPLOY_HOST=你的服务器IP PAPERHUB_DEPLOY_PASS=你的密码 .venv\Scripts\python deploy\deploy.py stage1
 ```
 
 > 数据库文件位于 `instance/paperhub.db`（已加入 .gitignore，不提交到 git）。
@@ -133,6 +136,7 @@ vibecoding/
 ├── csrf_protect.py      # CSRF 防护：会话 Token 生成/校验，全部 POST 统一 403 拦截
 ├── tests/               # pytest 正式测试套件（临时数据库，不触碰真实数据）
 ├── .github/workflows/   # GitHub Actions CI（推送自动跑测试，失败阻断合并 main）
+├── deploy/              # 生产部署：deploy.py 分阶段脚本 + DEPLOY.md 部署指南（香港轻量 + gunicorn + systemd）
 ├── config.py            # 应用配置（SECRET_KEY、数据库路径、DeepSeek Key、上传上限）
 ├── local_config.example.py # 本地配置模板（复制为 local_config.py 填 DeepSeek Key，git 忽略）
 ├── crawler/
@@ -192,4 +196,5 @@ vibecoding/
 - 列表页表格中的下载按钮链接（文字为“试题/答案/作文”等通用标签，且指向的详情页可能已失效）会被爬虫直接跳过，不进入待审核。
 - **CSRF 防护为轻量自实现**（`csrf_protect.py`，约 70 行，不引入额外依赖）：会话级随机 Token + `secrets.compare_digest` 恒定时间比较；所有 POST（含登录/注册）统一在 `before_request` 校验，无合法 Token 返回 403；GET 等无副作用方法不校验。前端配套：全部 POST 表单加隐藏域，base.html 的全局 fetch 封装自动为同源非 GET 请求附 `X-CSRFToken` 请求头（跨域请求不携带、不触发 CORS 预检）。
 - **CI 与 main 分支保护**：GitHub Actions 在推送/PR 时跑 pytest；main 已配置 required status check `test`（不强制管理员：仓库主仍可按分步开发节奏直推 main，非管理员提交/PR 合并必须测试全绿）。
-- 后续规划：试卷上下架、标签编辑、生产环境部署（PythonAnywhere / Vercel）。
+- **生产部署（2026-09-25 上线）**：腾讯云轻量香港服务器 + gunicorn + systemd（`deploy/DEPLOY.md`）；gunicorn 固定单 worker——后台爬虫任务为进程内内存态，多 worker 会状态不一致；`SECRET_KEY` 由部署脚本随机生成写入 `/etc/paperhub.env`（轮换会令在线会话失效，属预期）；数据库与 `local_config.py` 不随 git 下发，靠部署脚本 stage4 上传；线上库与本地库是两份数据，本地开发不会影响线上。
+- 后续规划：试卷上下架、标签编辑。
